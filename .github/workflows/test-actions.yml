@@ -19,6 +19,7 @@ jobs:
         shell: bash
         run: |
           set -eux
+          echo "=== BEFORE CLEANUP ==="
           df -h
           sudo rm -rf /usr/local/lib/android || true
           sudo rm -rf /usr/share/dotnet || true
@@ -27,13 +28,13 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache || true
           sudo docker system prune -af --volumes || true
           sudo apt-get clean || true
+          echo "=== AFTER CLEANUP ==="
           df -h
 
-      - name: Build MechOS Arch ISO
+      - name: Build MechOS Arch ISO with Creator Mode
         shell: bash
         run: |
           set -euxo pipefail
-
           mkdir -p "$GITHUB_WORKSPACE/out"
 
           docker run --rm --privileged \
@@ -42,168 +43,364 @@ jobs:
             -w /workspace \
             archlinux:latest \
             bash -lc '
-              set -euxo pipefail
+          set -euxo pipefail
 
-              pacman -Syu --noconfirm
-              pacman -S --noconfirm archiso git rsync sed grep coreutils findutils
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm archiso git rsync sed grep coreutils findutils
 
-              rm -rf /workspace/archlive /workspace/work
-              cp -a /usr/share/archiso/configs/releng /workspace/archlive
+          rm -rf /workspace/archlive /workspace/work
+          cp -a /usr/share/archiso/configs/releng /workspace/archlive
 
-              # Enable multilib for Steam and 32-bit gaming libraries.
-              sed -i "/^\#\[multilib\]/,/^\#Include = \/etc\/pacman.d\/mirrorlist/ s/^\#//" \
-                /workspace/archlive/pacman.conf
+          # Steam and Windows-game support need multilib.
+          sed -i "/^\#\[multilib\]/,/^\#Include = \/etc\/pacman.d\/mirrorlist/ s/^\#//" \
+            /workspace/archlive/pacman.conf
 
-              # MechOS gaming + desktop packages.
-              cat >> /workspace/archlive/packages.x86_64 << "PKGS"
-plasma-meta
-sddm
-konsole
-dolphin
-ark
-kate
-networkmanager
-network-manager-applet
-bluez
-bluez-utils
-pipewire
-pipewire-alsa
-pipewire-pulse
-wireplumber
-xdg-desktop-portal
-xdg-desktop-portal-kde
-steam
-gamescope
-lutris
-gamemode
-lib32-gamemode
-mangohud
-lib32-mangohud
-wine
-wine-mono
-wine-gecko
-winetricks
-protontricks
-vulkan-tools
-mesa
-lib32-mesa
-vulkan-radeon
-lib32-vulkan-radeon
-vulkan-intel
-lib32-vulkan-intel
-nvidia
-nvidia-utils
-lib32-nvidia-utils
-linux
-linux-headers
-linux-firmware
-linux-firmware-whence
-ntfs-3g
-exfatprogs
-btrfs-progs
-dosfstools
-e2fsprogs
-f2fs-tools
-xfsprogs
-openssh
-git
-curl
-wget
-unzip
-zip
-p7zip
-flatpak
-PKGS
+          # Gaming, desktop, GPU, VR and Creator Mode packages.
+          cat >> /workspace/archlive/packages.x86_64 << "PKGS"
+          plasma-meta
+          sddm
+          konsole
+          dolphin
+          ark
+          kate
+          kdialog
+          firefox
+          networkmanager
+          network-manager-applet
+          bluez
+          bluez-utils
+          pipewire
+          pipewire-alsa
+          pipewire-pulse
+          wireplumber
+          xdg-desktop-portal
+          xdg-desktop-portal-kde
+          steam
+          gamescope
+          lutris
+          gamemode
+          lib32-gamemode
+          mangohud
+          lib32-mangohud
+          wine
+          wine-mono
+          wine-gecko
+          winetricks
+          protontricks
+          vulkan-tools
+          mesa
+          lib32-mesa
+          vulkan-radeon
+          lib32-vulkan-radeon
+          vulkan-intel
+          lib32-vulkan-intel
+          nvidia
+          nvidia-utils
+          lib32-nvidia-utils
+          linux
+          linux-headers
+          linux-firmware
+          linux-firmware-whence
+          ntfs-3g
+          exfatprogs
+          btrfs-progs
+          dosfstools
+          e2fsprogs
+          f2fs-tools
+          xfsprogs
+          openssh
+          git
+          git-lfs
+          curl
+          wget
+          unzip
+          zip
+          p7zip
+          flatpak
+          base-devel
+          cmake
+          ninja
+          clang
+          python
+          python-pip
+          ffmpeg
+          blender
+          obs-studio
+          kdenlive
+          krita
+          PKGS
 
-              # Reuse the existing MechOS root filesystem overlay.
-              if [ -d /workspace/overlay/rootfs ]; then
-                rsync -aHAX --numeric-ids /workspace/overlay/rootfs/ /workspace/archlive/airootfs/
-              fi
+          # Reuse all existing MechOS branding, wallpapers, MechScope files and tools.
+          if [ -d /workspace/overlay/rootfs ]; then
+            rsync -aHAX --numeric-ids /workspace/overlay/rootfs/ /workspace/archlive/airootfs/
+          fi
 
-              # Arch-specific defaults.
-              mkdir -p /workspace/archlive/airootfs/etc/sddm.conf.d
-              cat > /workspace/archlive/airootfs/etc/sddm.conf.d/mechos.conf << "EOF"
-[Autologin]
-User=mechos
-Session=plasma.desktop
-Relogin=true
-EOF
+          # ---------- GUARANTEED CREATOR MODE ----------
+          mkdir -p /workspace/archlive/airootfs/usr/local/bin
+          mkdir -p /workspace/archlive/airootfs/usr/share/applications
+          mkdir -p /workspace/archlive/airootfs/usr/share/wayland-sessions
+          mkdir -p /workspace/archlive/airootfs/etc/skel/Desktop
+          mkdir -p /workspace/archlive/airootfs/home/mechos/Desktop
 
-              # Create the default live user.
-              mkdir -p /workspace/archlive/airootfs/etc/systemd/system/getty@tty1.service.d
-              cat > /workspace/archlive/airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf << "EOF"
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --autologin mechos --noclear %I $TERM
-EOF
+          cat > /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode << "EOF"
+          #!/usr/bin/env bash
+          set -u
 
-              # Ensure groups/user exist in the live image.
-              cat >> /workspace/archlive/airootfs/etc/passwd << "EOF"
-mechos:x:1000:1000:MechOS Live User:/home/mechos:/bin/bash
-EOF
-              cat >> /workspace/archlive/airootfs/etc/group << "EOF"
-mechos:x:1000:
-EOF
-              cat >> /workspace/archlive/airootfs/etc/shadow << "EOF"
-mechos::20000:0:99999:7:::
-EOF
-              mkdir -p /workspace/archlive/airootfs/home/mechos
-              chown -R 1000:1000 /workspace/archlive/airootfs/home/mechos
+          launch_if_available() {
+            local command_name="$1"
+            local display_name="$2"
 
-              # Boot to graphical mode.
-              mkdir -p /workspace/archlive/airootfs/etc/systemd/system
-              ln -sf /usr/lib/systemd/system/graphical.target \
-                /workspace/archlive/airootfs/etc/systemd/system/default.target
+            if command -v "$command_name" >/dev/null 2>&1; then
+              "$command_name" >/dev/null 2>&1 &
+            else
+              kdialog --title "MechOS Creator Mode" \
+                --sorry "$display_name is not installed or not available in this image."
+            fi
+          }
 
-              # Enable core services in the image.
-              mkdir -p /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants
-              ln -sf /usr/lib/systemd/system/NetworkManager.service \
-                /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/NetworkManager.service
-              ln -sf /usr/lib/systemd/system/bluetooth.service \
-                /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/bluetooth.service
-              mkdir -p /workspace/archlive/airootfs/etc/systemd/system/display-manager.service.wants
-              ln -sf /usr/lib/systemd/system/sddm.service \
-                /workspace/archlive/airootfs/etc/systemd/system/display-manager.service
+          open_page() {
+            xdg-open "$1" >/dev/null 2>&1 &
+          }
 
-              # MechOS ISO identity.
-              sed -i "s/^iso_name=.*/iso_name=\"mechos\"/" /workspace/archlive/profiledef.sh
-              sed -i "s/^iso_label=.*/iso_label=\"MECHOS_$(date +%Y%m)\"/" /workspace/archlive/profiledef.sh
-              sed -i "s/^iso_publisher=.*/iso_publisher=\"MechOS\"/" /workspace/archlive/profiledef.sh
-              sed -i "s/^iso_application=.*/iso_application=\"MechOS Gaming Linux\"/" /workspace/archlive/profiledef.sh
+          while true; do
+            CHOICE="$(kdialog \
+              --title "MECHOS CREATOR MODE" \
+              --menu "Creator workstation - choose a tool" \
+              blender "Blender - 3D assets, avatars and models" \
+              obs "OBS Studio - recording and streaming" \
+              kdenlive "Kdenlive - video editing" \
+              krita "Krita - textures and concept art" \
+              unity "Unity Hub setup" \
+              unreal "Unreal Engine Linux setup" \
+              vrchat "VRChat Creator setup" \
+              mechclip "MechClip / custom editor" \
+              terminal "Creator terminal" \
+              files "Project files" \
+              gaming "Return to Gaming Mode" \
+              desktop "Stay in Desktop Mode" \
+              exit "Close Creator Mode" 2>/dev/null || true)"
 
-              mkdir -p /workspace/out /workspace/work
-              mkarchiso -v \
-                -w /workspace/work \
-                -o /workspace/out \
-                /workspace/archlive
+            case "$CHOICE" in
+              blender)
+                launch_if_available blender "Blender"
+                ;;
+              obs)
+                launch_if_available obs "OBS Studio"
+                ;;
+              kdenlive)
+                launch_if_available kdenlive "Kdenlive"
+                ;;
+              krita)
+                launch_if_available krita "Krita"
+                ;;
+              unity)
+                kdialog --title "Unity on MechOS" \
+                  --msgbox "Unity Hub is kept out of the ISO to keep the image buildable. MechOS will open the official Unity download page. Install the Unity versions you need from Hub."
+                open_page "https://unity.com/download"
+                ;;
+              unreal)
+                kdialog --title "Unreal Engine on MechOS" \
+                  --msgbox "Unreal Engine is kept out of the ISO because of its very large size. MechOS will open Epic Linux development information. Epic account or source access may be required."
+                open_page "https://www.unrealengine.com/en-US/linux"
+                ;;
+              vrchat)
+                kdialog --title "VRChat Creator tools on MechOS" \
+                  --msgbox "VRChat Creator Companion is primarily a Windows creator workflow. MechOS includes Wine and Lutris compatibility tools and opens the VCC documentation."
+                open_page "https://vcc.docs.vrchat.com/"
+                ;;
+              mechclip)
+                if command -v mechclip >/dev/null 2>&1; then
+                  mechclip >/dev/null 2>&1 &
+                elif [ -x /opt/mechclip/MechClip ]; then
+                  /opt/mechclip/MechClip >/dev/null 2>&1 &
+                elif [ -x /opt/MechClip/MechClip ]; then
+                  /opt/MechClip/MechClip >/dev/null 2>&1 &
+                else
+                  kdialog --title "MechClip" \
+                    --sorry "MechClip is not installed at a known path yet. Put the app in /opt/mechclip or expose a mechclip command and Creator Mode will launch it automatically."
+                fi
+                ;;
+              terminal)
+                konsole >/dev/null 2>&1 &
+                ;;
+              files)
+                dolphin "$HOME" >/dev/null 2>&1 &
+                ;;
+              gaming)
+                if command -v mechos-gaming-mode >/dev/null 2>&1; then
+                  mechos-gaming-mode >/dev/null 2>&1 &
+                elif command -v steam >/dev/null 2>&1; then
+                  steam -gamepadui >/dev/null 2>&1 &
+                fi
+                exit 0
+                ;;
+              desktop)
+                exit 0
+                ;;
+              exit|"")
+                exit 0
+                ;;
+            esac
+          done
+          EOF
+          chmod +x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 
-              ISO="$(find /workspace/out -maxdepth 1 -type f -name "*.iso" | head -n1)"
-              test -n "$ISO"
+          cat > /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session << "EOF"
+          #!/usr/bin/env bash
+          export MECHOS_MODE=creator
+          export XDG_CURRENT_DESKTOP=KDE
+          (
+            sleep 6
+            /usr/local/bin/mechos-creator-mode >/dev/null 2>&1 &
+          ) &
+          exec /usr/bin/startplasma-wayland
+          EOF
+          chmod +x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session
 
-              FINAL=/workspace/out/MechOS-Arch-x86_64.iso
-              mv "$ISO" "$FINAL"
-              sha256sum "$FINAL" > "$FINAL.sha256"
+          cat > /workspace/archlive/airootfs/usr/share/wayland-sessions/mechos-creator.desktop << "EOF"
+          [Desktop Entry]
+          Name=MechOS Creator Mode
+          Comment=MechOS creator workstation
+          Exec=/usr/local/bin/mechos-creator-session
+          Type=Application
+          DesktopNames=KDE
+          EOF
 
-              ls -lh /workspace/out
-            '
+          cat > /workspace/archlive/airootfs/usr/share/applications/mechos-creator-mode.desktop << "EOF"
+          [Desktop Entry]
+          Type=Application
+          Name=MechOS Creator Mode
+          Comment=Open the MechOS creator workstation
+          Exec=/usr/local/bin/mechos-creator-mode
+          Icon=applications-graphics
+          Terminal=false
+          Categories=Graphics;AudioVideo;Development;
+          Keywords=MechOS;Creator;Blender;Unity;Unreal;VRChat;MechClip;
+          EOF
+
+          cp /workspace/archlive/airootfs/usr/share/applications/mechos-creator-mode.desktop \
+            /workspace/archlive/airootfs/etc/skel/Desktop/Creator-Mode.desktop
+          cp /workspace/archlive/airootfs/usr/share/applications/mechos-creator-mode.desktop \
+            /workspace/archlive/airootfs/home/mechos/Desktop/Creator-Mode.desktop
+          chmod +x /workspace/archlive/airootfs/etc/skel/Desktop/Creator-Mode.desktop
+          chmod +x /workspace/archlive/airootfs/home/mechos/Desktop/Creator-Mode.desktop
+
+          mkdir -p /workspace/archlive/airootfs/usr/share/doc/mechos
+          cat > /workspace/archlive/airootfs/usr/share/doc/mechos/CREATOR-MODE.txt << "EOF"
+          MECHOS CREATOR MODE
+          ===================
+
+          Creator Mode is built into this ISO.
+
+          Included locally:
+          - Blender
+          - OBS Studio
+          - Kdenlive
+          - Krita
+          - FFmpeg
+          - Git / Git LFS
+          - CMake / Ninja / Clang
+          - Python
+          - Wine / Winetricks
+          - Lutris
+          - MechOS Creator dashboard
+
+          Large tools are intentionally installed after OS setup:
+          - Unity Hub / Unity editors
+          - Unreal Engine
+          - VRChat Creator Companion compatibility workflow
+
+          This keeps the bootable ISO small enough to build and update while preserving a
+          graphical Creator Mode experience.
+          EOF
+
+          # ---------- ARCH / LIVE DESKTOP DEFAULTS ----------
+          mkdir -p /workspace/archlive/airootfs/etc/sddm.conf.d
+          cat > /workspace/archlive/airootfs/etc/sddm.conf.d/mechos.conf << "EOF"
+          [Autologin]
+          User=mechos
+          Session=plasma.desktop
+          Relogin=true
+          EOF
+
+          mkdir -p /workspace/archlive/airootfs/etc/systemd/system/getty@tty1.service.d
+          cat > /workspace/archlive/airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf << "EOF"
+          [Service]
+          ExecStart=
+          ExecStart=-/sbin/agetty --autologin mechos --noclear %I $TERM
+          EOF
+
+          if ! grep -q "^mechos:" /workspace/archlive/airootfs/etc/passwd 2>/dev/null; then
+            cat >> /workspace/archlive/airootfs/etc/passwd << "EOF"
+          mechos:x:1000:1000:MechOS Live User:/home/mechos:/bin/bash
+          EOF
+          fi
+
+          if ! grep -q "^mechos:" /workspace/archlive/airootfs/etc/group 2>/dev/null; then
+            cat >> /workspace/archlive/airootfs/etc/group << "EOF"
+          mechos:x:1000:
+          EOF
+          fi
+
+          if ! grep -q "^mechos:" /workspace/archlive/airootfs/etc/shadow 2>/dev/null; then
+            cat >> /workspace/archlive/airootfs/etc/shadow << "EOF"
+          mechos::20000:0:99999:7:::
+          EOF
+          fi
+
+          mkdir -p /workspace/archlive/airootfs/home/mechos
+          chown -R 1000:1000 /workspace/archlive/airootfs/home/mechos
+
+          ln -sf /usr/lib/systemd/system/graphical.target \
+            /workspace/archlive/airootfs/etc/systemd/system/default.target
+
+          mkdir -p /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants
+          ln -sf /usr/lib/systemd/system/NetworkManager.service \
+            /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/NetworkManager.service
+          ln -sf /usr/lib/systemd/system/bluetooth.service \
+            /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/bluetooth.service
+          ln -sf /usr/lib/systemd/system/sddm.service \
+            /workspace/archlive/airootfs/etc/systemd/system/display-manager.service
+
+          sed -i "s/^iso_name=.*/iso_name=\"mechos\"/" /workspace/archlive/profiledef.sh
+          sed -i "s/^iso_label=.*/iso_label=\"MECHOS_$(date +%Y%m)\"/" /workspace/archlive/profiledef.sh
+          sed -i "s/^iso_publisher=.*/iso_publisher=\"MechOS\"/" /workspace/archlive/profiledef.sh
+          sed -i "s/^iso_application=.*/iso_application=\"MechOS Arch Gaming + Creator\"/" /workspace/archlive/profiledef.sh
+
+          mkdir -p /workspace/out /workspace/work
+          mkarchiso -v \
+            -w /workspace/work \
+            -o /workspace/out \
+            /workspace/archlive
+
+          ISO="$(find /workspace/out -maxdepth 1 -type f -name "*.iso" | head -n1)"
+          test -n "$ISO"
+
+          FINAL=/workspace/out/MechOS-Arch-Creator-x86_64.iso
+          mv "$ISO" "$FINAL"
+          sha256sum "$FINAL" > "$FINAL.sha256"
+
+          ls -lh /workspace/out
+
+          '
 
       - name: Verify ISO
         shell: bash
         run: |
           set -euxo pipefail
-          test -f out/MechOS-Arch-x86_64.iso
-          test -f out/MechOS-Arch-x86_64.iso.sha256
+          test -f out/MechOS-Arch-Creator-x86_64.iso
+          test -f out/MechOS-Arch-Creator-x86_64.iso.sha256
           cd out
-          sha256sum -c MechOS-Arch-x86_64.iso.sha256
+          sha256sum -c MechOS-Arch-Creator-x86_64.iso.sha256
           ls -lh
 
       - name: Upload MechOS ISO
         uses: actions/upload-artifact@v4
         with:
-          name: MechOS-Arch-x86_64
+          name: MechOS-Arch-Creator-x86_64
           path: |
-            out/MechOS-Arch-x86_64.iso
-            out/MechOS-Arch-x86_64.iso.sha256
+            out/MechOS-Arch-Creator-x86_64.iso
+            out/MechOS-Arch-Creator-x86_64.iso.sha256
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
