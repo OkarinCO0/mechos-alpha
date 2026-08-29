@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=MechOS Live Welcome
+Exec=/usr/local/bin/mechos-live-welcome
+Terminal=false
+X-KDE-autostart-after=panel
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

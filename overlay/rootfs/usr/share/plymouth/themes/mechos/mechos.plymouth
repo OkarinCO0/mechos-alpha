@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=MechOS
+Description=MechOS animated boot sequence
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/mechos
+ScriptFile=/usr/share/plymouth/themes/mechos/mechos.script

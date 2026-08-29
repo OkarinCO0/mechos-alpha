@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source /usr/local/lib/mechos/runtime.sh
+
+if ! mechos_is_live; then
+  if command -v kdialog >/dev/null 2>&1; then
+    kdialog --title 'MechOS Installer' --sorry 'The installer is available when MechOS is booted from the USB/live image.'
+  else
+    zenity --error --title='MechOS Installer' --text='Boot the MechOS USB/live image to install MechOS.'
+  fi
+  exit 1
+fi
+
+if [[ ! -x /usr/bin/liveinst ]]; then
+  zenity --error --title='MechOS Installer' --text='The Anaconda live installer is missing from this image.'
+  exit 1
+fi
+
+exec /usr/bin/liveinst

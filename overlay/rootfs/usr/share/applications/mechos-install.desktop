@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Install MechOS
+Comment=Install MechOS with the graphical installer
+Exec=/usr/local/bin/mechos-install
+Icon=system-software-install
+Terminal=false
+Categories=System;
+StartupNotify=true

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ $EUID -ne 0 ]]; then exec sudo "$0" "$@"; fi
+/usr/local/bin/mechos-snapshot pre-update || true
+dnf -y upgrade --refresh
+/usr/local/bin/mechos-gpu-setup || true

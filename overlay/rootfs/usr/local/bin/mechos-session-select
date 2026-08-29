@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+MODE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/mechos/session-mode"
+mkdir -p "$(dirname "$MODE_FILE")"
+case "${1:-}" in
+  plasma|desktop) printf 'desktop\n' > "$MODE_FILE" ;;
+  gamescope|gaming|mechscope) printf 'gaming\n' > "$MODE_FILE" ;;
+  *) echo "Usage: mechos-session-select {desktop|gaming}" >&2; exit 2 ;;
+esac
+# End just this graphical login; SDDM autologin/relogin starts the selected mode.
+loginctl terminate-user "$USER" || true

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ $EUID -ne 0 ]]; then exec sudo "$0" "$@"; fi
+LABEL="${1:-manual}"
+if findmnt -n -o FSTYPE / | grep -q '^btrfs$' && command -v snapper >/dev/null 2>&1; then
+  snapper -c root create -d "MechOS ${LABEL}" || true
+  echo "MechOS snapshot requested: ${LABEL}"
+else
+  echo "Snapshots require a Btrfs root and snapper. No snapshot created."
+fi

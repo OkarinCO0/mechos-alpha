@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source /usr/local/lib/mechos/runtime.sh
+mechos_is_live || exit 0
+DESKTOP="$(xdg-user-dir DESKTOP 2>/dev/null || printf '%s\n' "$HOME/Desktop")"
+mkdir -p "$DESKTOP"
+for app in mechos-install.desktop mechos-live-welcome.desktop; do
+  src="/usr/share/applications/$app"
+  [[ -f "$src" ]] || continue
+  cp -f "$src" "$DESKTOP/$app"
+  chmod +x "$DESKTOP/$app" || true
+done

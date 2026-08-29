@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MechOS Welcome
+Comment=Choose Install, Desktop Mode, or MechScope Gaming Mode
+Exec=/usr/local/bin/mechos-live-welcome --force
+Icon=applications-games
+Terminal=false
+Categories=System;
+StartupNotify=true

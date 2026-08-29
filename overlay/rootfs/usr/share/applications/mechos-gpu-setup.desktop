@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=MechOS GPU Setup
+Comment=Configure NVIDIA or AMD/Intel graphics support
+Exec=konsole -e sudo /usr/local/bin/mechos-gpu-setup
+Icon=video-display
+Terminal=false
+Type=Application
+Categories=System;Settings;

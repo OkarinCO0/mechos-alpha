@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if ! command -v kdialog >/dev/null 2>&1; then
+  echo "MechOS Control Center requires KDE's kdialog." >&2
+  exit 1
+fi
+
+choice="$(kdialog --title 'MechOS Control Center' --menu 'Choose an action' \
+  steam 'Launch Steam' \
+  lutris 'Launch Lutris' \
+  gaming 'Return to MechScope Gaming Mode' \
+  creator 'Install/repair creator stack' \
+  gpu 'Install/repair GPU support' \
+  info 'Show MechOS system info' || true)"
+
+case "$choice" in
+  steam) nohup steam >/dev/null 2>&1 & ;;
+  lutris) nohup lutris >/dev/null 2>&1 & ;;
+  gaming) exec /usr/local/bin/mechos-session-select gaming ;;
+  creator) exec konsole -e sudo /usr/local/bin/mechos-creator-setup ;;
+  gpu) exec konsole -e sudo /usr/local/bin/mechos-gpu-setup ;;
+  info)
+    info="$(cat /etc/mechos/mechos.conf 2>/dev/null; echo; lspci | grep -Ei 'VGA|3D|Display' || true)"
+    kdialog --title 'MechOS System Info' --msgbox "$info"
+    ;;
+esac

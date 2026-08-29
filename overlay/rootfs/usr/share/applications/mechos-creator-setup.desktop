@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=MechOS Creator Setup
+Comment=Install Unity Hub and creator dependencies
+Exec=konsole -e sudo /usr/local/bin/mechos-creator-setup
+Icon=applications-development
+Terminal=false
+Type=Application
+Categories=Development;System;

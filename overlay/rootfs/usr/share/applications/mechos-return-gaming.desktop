@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Return to MechScope
+Comment=Exit Desktop Mode and return to the MechOS gaming session
+Exec=/usr/local/bin/mechos-session-select gaming
+Icon=applications-games
+Terminal=false
+Type=Application
+Categories=Game;System;

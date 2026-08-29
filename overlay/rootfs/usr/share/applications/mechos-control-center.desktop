@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=MechOS Control Center
+Comment=Gaming, GPU, creator, and session controls for MechOS
+Exec=/usr/local/bin/mechos-control-center
+Icon=preferences-system
+Terminal=false
+Type=Application
+Categories=System;Settings;

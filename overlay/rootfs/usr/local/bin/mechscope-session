@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source /usr/local/lib/mechos/runtime.sh
+
+MODE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/mechos/session-mode"
+mkdir -p "$(dirname "$MODE_FILE")"
+
+if [[ -r "$MODE_FILE" ]]; then
+  MODE="$(cat "$MODE_FILE")"
+elif mechos_is_live; then
+  MODE=desktop
+else
+  MODE=gaming
+fi
+
+if [[ "$MODE" == "desktop" ]]; then
+  exec /usr/bin/startplasma-wayland
+fi
+
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=gamescope
+export STEAM_ALLOW_DRIVE_UNMOUNT=1
+export STEAM_GAMESCOPE_VRR_SUPPORTED=1
+export STEAM_GAMESCOPE_TEARING_SUPPORTED=1
+export STEAM_GAMESCOPE_HDR_SUPPORTED=1
+export STEAM_GAMESCOPE_FANCY_SCALING_SUPPORT=1
+export STEAM_GAMESCOPE_COLOR_MANAGED=1
+export STEAM_GAMESCOPE_VIRTUAL_WHITE=1
+export STEAM_MULTIPLE_XWAYLANDS=1
+export STEAM_DISABLE_AUDIO_DEVICE_SWITCHING=1
+export STEAM_UPDATEUI_PNG_BACKGROUND=/usr/share/backgrounds/mechos/mechscope-loading.png
+
+if lspci 2>/dev/null | grep -qi nvidia; then
+  export GBM_BACKEND=nvidia-drm
+  export __GLX_VENDOR_LIBRARY_NAME=nvidia
+fi
+
+STEAM_CMD=(/usr/bin/steam -gamepadui -steamos3 -steampal -steamdeck)
+GS_ARGS=(-e -f)
+[[ "${MECHOS_DISABLE_VRR:-0}" != "1" ]] && GS_ARGS+=(--adaptive-sync)
+[[ "${MECHOS_HDR:-0}" == "1" ]] && GS_ARGS+=(--hdr-enabled)
+
+if [[ ! -x /usr/bin/gamescope || ! -x /usr/bin/steam ]]; then
+  printf 'desktop\n' > "$MODE_FILE"
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send 'MechScope' 'Steam or Gamescope is not ready yet. Opening Desktop Mode.' || true
+  fi
+  exec /usr/bin/startplasma-wayland
+fi
+
+exec /usr/bin/gamescope "${GS_ARGS[@]}" -- "${STEAM_CMD[@]}"

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=MechOS Live Desktop Shortcuts
+Exec=/usr/local/bin/mechos-live-shortcuts
+Terminal=false
+NoDisplay=true

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ $EUID -ne 0 ]]; then exec sudo "$0" "$@"; fi
+if lspci 2>/dev/null | grep -qi nvidia; then
+  echo "[MechOS] NVIDIA GPU detected"
+  dnf -y install akmod-nvidia xorg-x11-drv-nvidia-cuda || {
+    echo "[MechOS] NVIDIA packages unavailable. Check RPM Fusion/nonfree and network." >&2
+    exit 1
+  }
+  grubby --update-kernel=ALL --args='nvidia-drm.modeset=1' || true
+else
+  echo "[MechOS] AMD/Intel graphics path"
+  dnf -y install mesa-dri-drivers mesa-vulkan-drivers vulkan-tools || true
+fi

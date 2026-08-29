@@ -1,0 +1,4 @@
+MechOS build scripts in this prototype are provided for the user's project use.
+Third-party software remains under its own license. Fedora trademarks, Steam,
+NVIDIA, Unity, Unreal Engine, VRChat and other product names belong to their
+respective owners. See THIRD-PARTY.md.

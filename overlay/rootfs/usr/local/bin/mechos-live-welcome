@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source /usr/local/lib/mechos/runtime.sh
+mechos_is_live || exit 0
+
+# Do not reopen repeatedly during the same live login unless manually launched.
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+SEEN="$RUNTIME_DIR/mechos-welcome-shown"
+[[ -e "$SEEN" && "${1:-}" != "--force" ]] && exit 0
+touch "$SEEN"
+
+sleep 2
+
+while true; do
+  if command -v kdialog >/dev/null 2>&1; then
+    choice="$(kdialog --title 'Welcome to MechOS' --menu \
+      'Choose how you want to use MechOS. No terminal commands are required.' \
+      install 'Install MechOS to this computer' \
+      desktop 'Try MechOS Desktop Mode' \
+      gaming 'Start MechScope Gaming Mode' \
+      shutdown 'Shut Down' 2>/dev/null || true)"
+  else
+    choice="$(zenity --list --title='Welcome to MechOS' \
+      --text='Choose how you want to use MechOS. No terminal commands are required.' \
+      --column='Action' --column='Description' \
+      install 'Install MechOS to this computer' \
+      desktop 'Try MechOS Desktop Mode' \
+      gaming 'Start MechScope Gaming Mode' \
+      shutdown 'Shut Down' \
+      --print-column=1 2>/dev/null || true)"
+  fi
+
+  case "$choice" in
+    install)
+      /usr/local/bin/mechos-install
+      exit 0
+      ;;
+    desktop|"")
+      exit 0
+      ;;
+    gaming)
+      /usr/local/bin/mechos-session-select gaming
+      exit 0
+      ;;
+    shutdown)
+      systemctl poweroff
+      exit 0
+      ;;
+  esac
+done

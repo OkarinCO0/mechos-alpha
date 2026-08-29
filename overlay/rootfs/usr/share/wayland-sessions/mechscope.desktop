@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=MechScope
+Comment=MechOS Gamescope + Steam Gaming Mode
+Exec=/usr/local/bin/mechscope-session
+TryExec=/usr/local/bin/mechscope-session
+Type=Application
+DesktopNames=MechScope

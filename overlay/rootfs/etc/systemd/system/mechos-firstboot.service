@@ -1,0 +1,16 @@
+[Unit]
+Description=MechOS first-boot gaming and GPU setup
+After=network-online.target
+Wants=network-online.target
+Before=sddm.service
+ConditionPathExists=!/run/initramfs/live
+ConditionPathExists=!/var/lib/mechos/firstboot.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mechos-firstboot
+RemainAfterExit=yes
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target

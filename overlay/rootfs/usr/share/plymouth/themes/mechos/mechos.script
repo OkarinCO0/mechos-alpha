@@ -1,0 +1,29 @@
+# MechOS Plymouth theme: cycles through four 16:9 boot screens.
+# Plymouth's script renderer scales via sprite dimensions when supported.
+
+screen1 = Image("screen1.png");
+screen2 = Image("screen2.png");
+screen3 = Image("screen3.png");
+screen4 = Image("screen4.png");
+
+sprite = Sprite(screen1);
+sprite.SetZ(-100);
+
+fun center(img) {
+    sprite.SetImage(img);
+    sprite.SetX((Window.GetWidth() - img.GetWidth()) / 2);
+    sprite.SetY((Window.GetHeight() - img.GetHeight()) / 2);
+}
+
+start_time = Plymouth.GetTime();
+
+fun refresh() {
+    t = Plymouth.GetTime() - start_time;
+    phase = Math.Int(t / 1.7);
+    if (phase == 0) center(screen1);
+    else if (phase == 1) center(screen2);
+    else if (phase == 2) center(screen3);
+    else center(screen4);
+}
+
+Plymouth.SetRefreshFunction(refresh);
