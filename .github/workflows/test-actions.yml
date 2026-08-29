@@ -94,7 +94,7 @@ jobs:
           lib32-vulkan-radeon
           vulkan-intel
           lib32-vulkan-intel
-          nvidia-open
+          nvidia
           nvidia-utils
           lib32-nvidia-utils
           linux
@@ -378,7 +378,13 @@ jobs:
 
           FINAL=/workspace/out/MechOS-Arch-Creator-x86_64.iso
           mv "$ISO" "$FINAL"
-          sha256sum "$FINAL" > "$FINAL.sha256"
+
+          # Write a portable checksum that uses only the ISO filename,
+          # not the Docker-only /workspace/out path.
+          (
+            cd /workspace/out
+            sha256sum MechOS-Arch-Creator-x86_64.iso               > MechOS-Arch-Creator-x86_64.iso.sha256
+          )
 
           ls -lh /workspace/out
 
