@@ -13,11 +13,12 @@ jobs:
 
     steps:
       - name: Checkout MechOS
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
-name: Free disk space for MechOS
+      - name: Free disk space for MechOS
+        shell: bash
         run: |
-          echo "Disk before cleanup:"
+          echo "=== BEFORE CLEANUP ==="
           df -h
 
           sudo rm -rf /usr/local/lib/android || true
@@ -29,20 +30,14 @@ name: Free disk space for MechOS
           sudo docker system prune -af --volumes || true
           sudo apt-get clean || true
 
-          echo "Disk after cleanup:"
+          echo "=== AFTER CLEANUP ==="
           df -h
-          
-      - name: Verify ISO checksum
-        shell: bash
-        run: |
-          set -euxo pipefail
-          test -f out/MechOS-0.3.2-alpha-x86_64.iso
-          test -f out/MechOS-0.3.2-alpha-x86_64.iso.sha256
-          (cd out && sha256sum -c MechOS-0.3.2-alpha-x86_64.iso.sha256)
-          ls -lh out/MechOS-0.3.2-alpha-x86_64.iso*
+
       - name: Validate project files
         run: |
-          chmod +x build-iso.sh scripts/*.sh overlay/rootfs/usr/local/bin/* overlay/rootfs/usr/local/lib/mechos/*.sh
+          chmod +x build-iso.sh scripts/*.sh
+          chmod +x overlay/rootfs/usr/local/bin/* || true
+          chmod +x overlay/rootfs/usr/local/lib/mechos/*.sh || true
           ./scripts/validate-project.sh
 
       - name: Build Fedora 44 MechOS ISO in privileged container
@@ -50,6 +45,7 @@ name: Free disk space for MechOS
         run: |
           set -euxo pipefail
           mkdir -p out
+
           docker run --rm --privileged \
             -v /dev:/dev \
             -v "$GITHUB_WORKSPACE:/workspace" \
@@ -57,41 +53,44 @@ name: Free disk space for MechOS
             fedora:44 \
             bash -lc '
               set -euxo pipefail
+
               dnf -y install \
                 sudo kiwi kiwi-systemdeps distribution-gpg-keys \
                 git rsync python3 qemu-kvm libvirt-client \
                 util-linux coreutils findutils file
-              chmod +x build-iso.sh scripts/*.sh overlay/rootfs/usr/local/bin/* overlay/rootfs/usr/local/lib/mechos/*.sh
+
+              chmod +x build-iso.sh scripts/*.sh
+              chmod +x overlay/rootfs/usr/local/bin/* || true
+              chmod +x overlay/rootfs/usr/local/lib/mechos/*.sh || true
+
               ./scripts/validate-project.sh
               ./build-iso.sh
             '
-      
+
+      - name: Verify ISO checksum
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          test -f out/MechOS-0.3.2-alpha-x86_64.iso
+          test -f out/MechOS-0.3.2-alpha-x86_64.iso.sha256
+
+          cd out
+          sha256sum -c MechOS-0.3.2-alpha-x86_64.iso.sha256
+          ls -lh MechOS-0.3.2-alpha-x86_64.iso*
 
       - name: Split ISO for artifact storage
         shell: bash
         run: |
           set -euxo pipefail
+
           split -b 450M -d -a 2 \
             out/MechOS-0.3.2-alpha-x86_64.iso \
             out/MechOS-0.3.2-alpha-x86_64.iso.part-
-          cp out/MechOS-0.3.2-alpha-x86_64.iso.sha256 out/REASSEMBLE-SHA256.txt
-          cat > out/REASSEMBLE.txt <<'EOF'
-          MechOS ISO cloud build
 
-          Linux/macOS reassembly:
-            cat MechOS-0.3.2-alpha-x86_64.iso.part-* > MechOS-0.3.2-alpha-x86_64.iso
-            sha256sum -c REASSEMBLE-SHA256.txt
-
-          Windows PowerShell reassembly:
-            $parts = Get-ChildItem 'MechOS-0.3.2-alpha-x86_64.iso.part-*' | Sort-Object Name
-            $out = [System.IO.File]::Create('MechOS-0.3.2-alpha-x86_64.iso')
-            foreach ($p in $parts) {
-              $bytes = [System.IO.File]::ReadAllBytes($p.FullName)
-              $out.Write($bytes, 0, $bytes.Length)
-            }
-            $out.Close()
-            Get-FileHash .\MechOS-0.3.2-alpha-x86_64.iso -Algorithm SHA256
-          EOF
+          cp \
+            out/MechOS-0.3.2-alpha-x86_64.iso.sha256 \
+            out/REASSEMBLE-SHA256.txt
 
       - name: Upload ISO parts
         uses: actions/upload-artifact@v4
@@ -99,7 +98,6 @@ name: Free disk space for MechOS
           name: MechOS-0.3.2-alpha-x86_64
           path: |
             out/MechOS-0.3.2-alpha-x86_64.iso.part-*
-            out/REASSEMBLE.txt
             out/REASSEMBLE-SHA256.txt
           compression-level: 0
           retention-days: 7
