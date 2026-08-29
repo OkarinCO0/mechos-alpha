@@ -22,7 +22,7 @@ for cmd in git rsync python3 kiwi-ng; do
 done
 
 mkdir -p "$OUT"
-SRC="$($BASE/scripts/prepare-source.sh "$WORK")"
+SRC="$("$BASE/scripts/prepare-source.sh" "$WORK" | tail -n 1)"
 cd "$SRC"
 
 echo "Building MechOS 0.3.2 from Fedora KDE-Desktop-Live..."
