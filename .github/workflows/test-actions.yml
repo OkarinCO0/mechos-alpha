@@ -40,7 +40,22 @@ jobs:
               ./scripts/validate-project.sh
               ./build-iso.sh
             '
+      - name: Free disk space for MechOS
+        run: |
+          echo "Disk before cleanup:"
+          df -h
 
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo rm -rf /opt/hostedtoolcache || true
+
+          sudo docker system prune -af --volumes || true
+          sudo apt-get clean || true
+
+          echo "Disk after cleanup:"
+          df -h
       - name: Verify ISO checksum
         shell: bash
         run: |
