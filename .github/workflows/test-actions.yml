@@ -116,6 +116,7 @@ jobs:
           unzip
           zip
           p7zip
+          sudo
           flatpak
           base-devel
           cmake
@@ -123,6 +124,8 @@ jobs:
           clang
           python
           python-pip
+          python-pygame
+          python-pyqt6
           ffmpeg
           blender
           obs-studio
@@ -227,11 +230,7 @@ jobs:
                 dolphin "$HOME" >/dev/null 2>&1 &
                 ;;
               gaming)
-                if command -v mechos-gaming-mode >/dev/null 2>&1; then
-                  mechos-gaming-mode >/dev/null 2>&1 &
-                elif command -v steam >/dev/null 2>&1; then
-                  steam -gamepadui >/dev/null 2>&1 &
-                fi
+                /usr/local/bin/mechos-return-to-mechscope >/dev/null 2>&1 &
                 exit 0
                 ;;
               desktop)
@@ -314,12 +313,317 @@ jobs:
           graphical Creator Mode experience.
           EOF
 
+          # ---------- MECHSCOPE BUILT-IN MODE SWITCHER ----------
+          # MechScope is the Gaming Mode shell. It owns the Steam launcher and
+          # mode switching so Desktop/Creator switching is part of MechScope,
+          # not a separate desktop-only utility.
+          cat > /workspace/archlive/airootfs/usr/local/bin/mechscope << "PYEOF"
+          #!/usr/bin/env python3
+          import os
+          import subprocess
+          import sys
+
+          from PyQt6.QtCore import Qt, QTimer
+          from PyQt6.QtGui import QFont, QKeyEvent
+          from PyQt6.QtWidgets import (
+              QApplication, QLabel, QMainWindow, QPushButton,
+              QVBoxLayout, QHBoxLayout, QWidget
+          )
+
+          try:
+              import pygame
+              HAVE_PYGAME = True
+          except Exception:
+              HAVE_PYGAME = False
+
+          MODE_FILE = f"/tmp/mechos-next-mode-{os.getuid()}"
+          FALLBACK = os.environ.get("MECHOS_GAMING_FALLBACK") == "1"
+
+          def write_mode(mode):
+              try:
+                  with open(MODE_FILE, "w", encoding="utf-8") as f:
+                      f.write(mode + "\n")
+              except Exception:
+                  pass
+
+          class MechScope(QMainWindow):
+              def __init__(self):
+                  super().__init__()
+                  self.steam = None
+                  self.buttons = []
+                  self.index = 0
+                  self.setWindowTitle("MechScope")
+                  self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+                  self.setStyleSheet("""
+                      QMainWindow, QWidget {
+                          background-color: #0c0715;
+                          color: white;
+                      }
+                      QLabel#title {
+                          color: #c78cff;
+                          font-size: 42px;
+                          font-weight: 800;
+                      }
+                      QLabel#subtitle {
+                          color: #b8b2c8;
+                          font-size: 16px;
+                      }
+                      QPushButton {
+                          background-color: #21152f;
+                          border: 2px solid #4a3268;
+                          border-radius: 16px;
+                          padding: 18px 24px;
+                          text-align: left;
+                          color: white;
+                          font-size: 22px;
+                          font-weight: 650;
+                      }
+                      QPushButton:focus {
+                          background-color: #44245f;
+                          border: 3px solid #cc8cff;
+                      }
+                      QPushButton:hover {
+                          background-color: #352047;
+                      }
+                      QLabel#hint {
+                          color: #8d849d;
+                          font-size: 14px;
+                      }
+                  """)
+
+                  root = QWidget()
+                  self.setCentralWidget(root)
+                  outer = QVBoxLayout(root)
+                  outer.setContentsMargins(70, 55, 70, 45)
+                  outer.setSpacing(16)
+
+                  title = QLabel("MECHSCOPE")
+                  title.setObjectName("title")
+                  outer.addWidget(title)
+
+                  subtitle = QLabel("MechOS Gaming Shell  •  Library  •  Modes  •  Power")
+                  subtitle.setObjectName("subtitle")
+                  outer.addWidget(subtitle)
+                  outer.addSpacing(22)
+
+                  self.add_button("🎮  Steam Library", self.open_steam)
+                  self.add_button("🖥  Desktop Mode", lambda: self.switch_mode("desktop"))
+                  self.add_button("🛠  Creator Mode", lambda: self.switch_mode("creator"))
+                  self.add_button("↻  Restart MechOS", self.reboot)
+                  self.add_button("⏻  Shut Down", self.poweroff)
+
+                  outer.addStretch(1)
+                  hint = QLabel("Keyboard: ↑ ↓ / Enter     Controller: D-pad / A")
+                  hint.setObjectName("hint")
+                  outer.addWidget(hint)
+
+                  self.buttons[0].setFocus()
+
+                  self.gamepad = None
+                  if HAVE_PYGAME:
+                      try:
+                          pygame.init()
+                          pygame.joystick.init()
+                          if pygame.joystick.get_count() > 0:
+                              self.gamepad = pygame.joystick.Joystick(0)
+                              self.gamepad.init()
+                      except Exception:
+                          self.gamepad = None
+
+                  self.timer = QTimer(self)
+                  self.timer.timeout.connect(self.poll)
+                  self.timer.start(60)
+
+              def add_button(self, label, callback):
+                  b = QPushButton(label)
+                  b.clicked.connect(callback)
+                  self.centralWidget().layout().addWidget(b)
+                  self.buttons.append(b)
+
+              def move_focus(self, delta):
+                  self.index = (self.index + delta) % len(self.buttons)
+                  self.buttons[self.index].setFocus()
+
+              def keyPressEvent(self, event: QKeyEvent):
+                  if event.key() in (Qt.Key.Key_Down, Qt.Key.Key_S):
+                      self.move_focus(1)
+                  elif event.key() in (Qt.Key.Key_Up, Qt.Key.Key_W):
+                      self.move_focus(-1)
+                  elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+                      self.buttons[self.index].click()
+                  elif event.key() == Qt.Key.Key_Escape:
+                      self.open_steam()
+                  else:
+                      super().keyPressEvent(event)
+
+              def poll(self):
+                  if self.steam is not None and self.steam.poll() is not None:
+                      self.steam = None
+                      self.showFullScreen()
+                      self.raise_()
+                      self.activateWindow()
+
+                  if not self.gamepad or not HAVE_PYGAME:
+                      return
+
+                  try:
+                      for ev in pygame.event.get():
+                          if ev.type == pygame.JOYHATMOTION:
+                              if ev.value[1] > 0:
+                                  self.move_focus(-1)
+                              elif ev.value[1] < 0:
+                                  self.move_focus(1)
+                          elif ev.type == pygame.JOYBUTTONDOWN:
+                              # Common SDL mapping: A=0, B=1
+                              if ev.button == 0:
+                                  self.buttons[self.index].click()
+                              elif ev.button == 1:
+                                  self.open_steam()
+                  except Exception:
+                      pass
+
+              def open_steam(self):
+                  if self.steam is not None:
+                      return
+                  try:
+                      self.hide()
+                      self.steam = subprocess.Popen(["steam", "-gamepadui"])
+                  except Exception:
+                      self.steam = None
+                      self.showFullScreen()
+
+              def switch_mode(self, mode):
+                  if FALLBACK:
+                      # In a VM fallback Plasma session, Desktop Mode means just
+                      # close MechScope; Creator Mode opens the creator dashboard.
+                      if mode == "creator":
+                          subprocess.Popen(["/usr/local/bin/mechos-creator-mode"])
+                      self.close()
+                      return
+
+                  write_mode(mode)
+                  QApplication.quit()
+
+              def reboot(self):
+                  subprocess.Popen(["sudo", "-n", "systemctl", "reboot"])
+
+              def poweroff(self):
+                  subprocess.Popen(["sudo", "-n", "systemctl", "poweroff"])
+
+          app = QApplication(sys.argv)
+          app.setApplicationName("MechScope")
+          window = MechScope()
+          window.showFullScreen()
+          sys.exit(app.exec())
+          PYEOF
+          chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechscope
+
+          # Handy launcher when testing from KDE/VirtualBox.
+          cat > /workspace/archlive/airootfs/usr/share/applications/mechscope.desktop << "EOF"
+          [Desktop Entry]
+          Type=Application
+          Name=MechScope
+          Comment=MechOS gaming shell and mode switcher
+          Exec=/usr/local/bin/mechscope
+          Icon=applications-games
+          Terminal=false
+          Categories=Game;System;
+          Keywords=MechOS;MechScope;Gaming;Steam;Desktop;Creator;
+          EOF
+
+          # Desktop/Creator sessions can always return to the default MechScope
+          # Gaming session by restarting SDDM.
+          cat > /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope << "EOF"
+          #!/usr/bin/env bash
+          exec sudo -n systemctl restart sddm
+          EOF
+          chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope
+
+          cat > /workspace/archlive/airootfs/usr/share/applications/mechos-return-to-mechscope.desktop << "EOF"
+          [Desktop Entry]
+          Type=Application
+          Name=Return to MechScope
+          Comment=Return to MechOS Gaming Mode
+          Exec=/usr/local/bin/mechos-return-to-mechscope
+          Icon=applications-games
+          Terminal=false
+          Categories=Game;System;
+          EOF
+
+          cp /workspace/archlive/airootfs/usr/share/applications/mechos-return-to-mechscope.desktop \
+            /workspace/archlive/airootfs/etc/skel/Desktop/Return-to-MechScope.desktop
+          cp /workspace/archlive/airootfs/usr/share/applications/mechos-return-to-mechscope.desktop \
+            /workspace/archlive/airootfs/home/mechos/Desktop/Return-to-MechScope.desktop
+          chmod 755 /workspace/archlive/airootfs/etc/skel/Desktop/Return-to-MechScope.desktop
+          chmod 755 /workspace/archlive/airootfs/home/mechos/Desktop/Return-to-MechScope.desktop
+
+          # ---------- MECHOS GAMING MODE ----------
+          # Gaming Mode is the default session. If Gamescope/Vulkan cannot start
+          # (common in some virtual machines), fall back to KDE Plasma instead
+          # of leaving the user at a black screen.
+          cat > /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session << "EOF"
+          #!/usr/bin/env bash
+          set +e
+
+          export MECHOS_MODE=gaming
+          export STEAM_FORCE_DESKTOPUI_SCALING="${STEAM_FORCE_DESKTOPUI_SCALING:-1.0}"
+          MODE_FILE="/tmp/mechos-next-mode-$(id -u)"
+
+          # Real Gaming Mode: Gamescope hosts MechScope. MechScope launches
+          # Steam Gamepad UI and writes the requested mode when switching.
+          if command -v gamescope >/dev/null 2>&1 && \
+             command -v vulkaninfo >/dev/null 2>&1 && \
+             vulkaninfo --summary >/dev/null 2>&1; then
+            while true; do
+              rm -f "$MODE_FILE"
+              gamescope -e -f -- /usr/local/bin/mechscope
+
+              NEXT="$(cat "$MODE_FILE" 2>/dev/null || echo gaming)"
+              rm -f "$MODE_FILE"
+
+              case "$NEXT" in
+                desktop)
+                  export MECHOS_MODE=desktop
+                  exec /usr/bin/startplasma-wayland
+                  ;;
+                creator)
+                  exec /usr/local/bin/mechos-creator-session
+                  ;;
+                gaming|"")
+                  # Re-open MechScope if it was closed without choosing a mode.
+                  continue
+                  ;;
+              esac
+            done
+          fi
+
+          # VM / no-Vulkan fallback: enter Plasma but automatically show the
+          # exact same MechScope switcher so its UI can still be tested.
+          export MECHOS_GAMING_FALLBACK=1
+          (
+            sleep 5
+            /usr/local/bin/mechscope >/dev/null 2>&1 &
+          ) &
+          exec /usr/bin/startplasma-wayland
+          EOF
+          chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session
+
+          mkdir -p /workspace/archlive/airootfs/usr/share/wayland-sessions
+          cat > /workspace/archlive/airootfs/usr/share/wayland-sessions/mechos-gaming.desktop << "EOF"
+          [Desktop Entry]
+          Name=MechOS Gaming Mode
+          Comment=MechOS Gamescope + Steam Gamepad UI
+          Exec=/usr/local/bin/mechos-gaming-session
+          Type=Application
+          DesktopNames=MechOS;Gamescope;Steam;
+          EOF
+
           # ---------- ARCH / LIVE DESKTOP DEFAULTS ----------
           mkdir -p /workspace/archlive/airootfs/etc/sddm.conf.d
           cat > /workspace/archlive/airootfs/etc/sddm.conf.d/mechos.conf << "EOF"
           [Autologin]
           User=mechos
-          Session=plasma.desktop
+          Session=mechos-gaming.desktop
           Relogin=true
           EOF
 
@@ -330,23 +634,27 @@ jobs:
           ExecStart=-/sbin/agetty --autologin mechos --noclear %I $TERM
           EOF
 
-          if ! grep -q "^mechos:" /workspace/archlive/airootfs/etc/passwd 2>/dev/null; then
-            cat >> /workspace/archlive/airootfs/etc/passwd << "EOF"
-          mechos:x:1000:1000:MechOS Live User:/home/mechos:/bin/bash
+          # Create the live user through systemd-sysusers instead of
+          # manually editing passwd/group/shadow. This avoids the boot-time
+          # systemd-sysusers failure seen in the Alpha VM.
+          mkdir -p /workspace/archlive/airootfs/usr/lib/sysusers.d
+          cat > /workspace/archlive/airootfs/usr/lib/sysusers.d/mechos.conf << "EOF"
+          u mechos 1000 "MechOS Live User" /home/mechos /bin/bash
+          m mechos wheel
           EOF
-          fi
 
-          if ! grep -q "^mechos:" /workspace/archlive/airootfs/etc/group 2>/dev/null; then
-            cat >> /workspace/archlive/airootfs/etc/group << "EOF"
-          mechos:x:1000:
+          mkdir -p /workspace/archlive/airootfs/usr/lib/tmpfiles.d
+          cat > /workspace/archlive/airootfs/usr/lib/tmpfiles.d/mechos.conf << "EOF"
+          d /home/mechos 0755 mechos mechos -
           EOF
-          fi
 
-          if ! grep -q "^mechos:" /workspace/archlive/airootfs/etc/shadow 2>/dev/null; then
-            cat >> /workspace/archlive/airootfs/etc/shadow << "EOF"
-          mechos::20000:0:99999:7:::
+          # Passwordless sudo is for the temporary LIVE tester account only.
+          # A future installed-system installer should create a normal user
+          # password and use normal sudo authentication.
+          mkdir -p /workspace/archlive/airootfs/etc/sudoers.d
+          cat > /workspace/archlive/airootfs/etc/sudoers.d/10-mechos-live << "EOF"
+          mechos ALL=(ALL:ALL) NOPASSWD: ALL
           EOF
-          fi
 
           mkdir -p /workspace/archlive/airootfs/home/mechos
           chown -R 1000:1000 /workspace/archlive/airootfs/home/mechos
@@ -355,8 +663,34 @@ jobs:
             /workspace/archlive/airootfs/etc/systemd/system/default.target
 
           mkdir -p /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants
+
+          # Use NetworkManager as the single network manager. The stock releng
+          # profile enables systemd-networkd; running both caused the boot
+          # failures seen in VirtualBox.
+          rm -f \
+            /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/systemd-networkd.service \
+            /workspace/archlive/airootfs/etc/systemd/system/network-online.target.wants/systemd-networkd-wait-online.service \
+            /workspace/archlive/airootfs/etc/systemd/system/dbus-org.freedesktop.network1.service \
+            || true
+
+          ln -sf /dev/null \
+            /workspace/archlive/airootfs/etc/systemd/system/systemd-networkd.service
+          ln -sf /dev/null \
+            /workspace/archlive/airootfs/etc/systemd/system/systemd-networkd-wait-online.service
+
           ln -sf /usr/lib/systemd/system/NetworkManager.service \
             /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/NetworkManager.service
+
+          # Keep systemd-resolved for DNS, but do not let time synchronization
+          # block the graphical boot if the VM/PC has no network yet.
+          mkdir -p /workspace/archlive/airootfs/etc/systemd/system/sysinit.target.wants
+          ln -sf /usr/lib/systemd/system/systemd-resolved.service \
+            /workspace/archlive/airootfs/etc/systemd/system/sysinit.target.wants/systemd-resolved.service
+          ln -sf /run/systemd/resolve/stub-resolv.conf \
+            /workspace/archlive/airootfs/etc/resolv.conf
+          ln -sf /dev/null \
+            /workspace/archlive/airootfs/etc/systemd/system/systemd-time-wait-sync.service
+
           ln -sf /usr/lib/systemd/system/bluetooth.service \
             /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/bluetooth.service
           ln -sf /usr/lib/systemd/system/sddm.service \
@@ -365,7 +699,40 @@ jobs:
           sed -i "s/^iso_name=.*/iso_name=\"mechos\"/" /workspace/archlive/profiledef.sh
           sed -i "s/^iso_label=.*/iso_label=\"MECHOS_$(date +%Y%m)\"/" /workspace/archlive/profiledef.sh
           sed -i "s/^iso_publisher=.*/iso_publisher=\"MechOS\"/" /workspace/archlive/profiledef.sh
-          sed -i "s/^iso_application=.*/iso_application=\"MechOS Arch Gaming + Creator\"/" /workspace/archlive/profiledef.sh
+          sed -i "s/^iso_application=.*/iso_application=\"MechOS Arch Gaming + Creator + MechScope\"/" /workspace/archlive/profiledef.sh
+
+          # ArchISO-authoritative permissions. These prevent launchers from
+          # losing executable bits inside the final SquashFS image.
+          cat >> /workspace/archlive/profiledef.sh << "EOF"
+
+          file_permissions["/usr/local/bin/mechos-creator-mode"]="0:0:755"
+          file_permissions["/usr/local/bin/mechos-creator-session"]="0:0:755"
+          file_permissions["/usr/local/bin/mechos-gaming-session"]="0:0:755"
+          file_permissions["/usr/local/bin/mechscope"]="0:0:755"
+          file_permissions["/usr/local/bin/mechos-return-to-mechscope"]="0:0:755"
+          file_permissions["/etc/sudoers.d/10-mechos-live"]="0:0:440"
+          EOF
+
+          # Final sanity check before mkarchiso.
+          chmod 755 \
+            /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode \
+            /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session \
+            /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session \
+            /workspace/archlive/airootfs/usr/local/bin/mechscope \
+            /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope
+          chmod 440 /workspace/archlive/airootfs/etc/sudoers.d/10-mechos-live
+
+          echo "=== MechOS pre-build validation ==="
+          test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
+          test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session
+          test -x /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session
+          test -x /workspace/archlive/airootfs/usr/local/bin/mechscope
+          test -x /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope
+          grep -q "Steam Library" /workspace/archlive/airootfs/usr/local/bin/mechscope
+          grep -q "Session=mechos-gaming.desktop" /workspace/archlive/airootfs/etc/sddm.conf.d/mechos.conf
+          grep -q "mechos ALL=(ALL:ALL) NOPASSWD: ALL" /workspace/archlive/airootfs/etc/sudoers.d/10-mechos-live
+          grep -q "u mechos 1000" /workspace/archlive/airootfs/usr/lib/sysusers.d/mechos.conf
+          echo "MechOS boot/admin validation passed."
 
           mkdir -p /workspace/out /workspace/work
           mkarchiso -v \
