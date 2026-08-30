@@ -2,7 +2,7 @@
 set -euxo pipefail
 
 pacman -Syu --noconfirm
-pacman -S --noconfirm archiso git rsync sed grep coreutils findutils
+pacman -S --noconfirm archiso git rsync sed grep coreutils findutils zstd
 
 rm -rf /workspace/archlive /workspace/work
 cp -a /usr/share/archiso/configs/releng /workspace/archlive
@@ -744,24 +744,101 @@ cat > /workspace/archlive/airootfs/usr/local/bin/mechos-install << "EOF"
 #!/usr/bin/env bash
 set -euo pipefail
 
+PAYLOAD_DIR="/usr/share/mechos/install-payload"
+CONFIG="$PAYLOAD_DIR/archinstall-mechos.json"
+PORT=45811
+
+if [ "${1:-}" != "--terminal" ] && [ ! -t 1 ]; then
+  exec konsole -e bash -lc \
+    'sudo /usr/local/bin/mechos-install --terminal; rc=$?; echo; echo "Installer exit code: $rc"; read -rp "Press Enter to close..."'
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  exec sudo "$0" --terminal
+fi
+
 if ! command -v archinstall >/dev/null 2>&1; then
   echo "archinstall is not available in this image." >&2
   exit 1
 fi
 
-MSG="MechOS Alpha installer currently uses Archinstall for disk partitioning and base-system installation.
+for f in \
+  "$PAYLOAD_DIR/mechos-rootfs.tar.zst" \
+  "$PAYLOAD_DIR/mechos-postinstall-target" \
+  "$CONFIG"; do
+  if [ ! -f "$f" ]; then
+    echo "Missing MechOS installer payload: $f" >&2
+    exit 1
+  fi
+done
 
-This is still an ALPHA installer path. Back up important files and test on a spare disk or virtual machine first."
+cat <<'WARN'
 
-if command -v kdialog >/dev/null 2>&1; then
-  kdialog --title "Install MechOS Alpha" --warningcontinuecancel "$MSG" || exit 0
+============================================================
+                   MECHOS ALPHA INSTALLER
+============================================================
+
+Archinstall will handle disk selection, formatting, users,
+bootloader and base Arch installation.
+
+After Archinstall finishes its base install, MechOS will
+automatically deploy:
+  - MechScope Gaming Mode
+  - Creator Mode
+  - Desktop Mode integration
+  - Performance Center
+  - GPU setup
+  - MechOS boot graphics / Plymouth
+  - MechOS updater and first-boot services
+
+IMPORTANT:
+  Installing an operating system can erase a selected disk.
+  Read Archinstall's disk summary carefully before confirming.
+  For Alpha testing, use a VM or spare drive first.
+
+============================================================
+WARN
+
+if command -v kdialog >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+  kdialog --title "Install MechOS Alpha" --warningcontinuecancel \
+    "MechOS uses Archinstall for disk setup.
+
+The selected disk can be erased if you choose a wipe/format option.
+
+Use a VM or spare drive for Alpha testing and verify the final disk summary before confirming." \
+    || exit 0
 fi
 
-if [ -t 1 ]; then
-  exec sudo archinstall
-else
-  exec konsole -e sudo archinstall
-fi
+# Archinstall's custom post-install commands execute inside the new system.
+# A tiny loopback-only HTTP server lets that chroot retrieve the MechOS
+# payload from the live ISO without requiring an external download.
+python3 -m http.server "$PORT" \
+  --bind 127.0.0.1 \
+  --directory "$PAYLOAD_DIR" \
+  >/tmp/mechos-installer-http.log 2>&1 &
+SERVER_PID=$!
+
+cleanup() {
+  kill "$SERVER_PID" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+sleep 1
+curl -fsS "http://127.0.0.1:${PORT}/mechos-postinstall-target" >/dev/null
+
+echo
+echo "Starting guided Archinstall..."
+echo "MechOS post-install integration is loaded."
+echo
+
+# Do NOT use --silent. The user still chooses the disk, filesystem,
+# bootloader, username/password and confirms all destructive actions.
+archinstall --config "$CONFIG"
+
+echo
+echo "Archinstall exited."
+echo "If installation completed successfully, the MechOS post-install"
+echo "stage should have created /var/lib/mechos/installed in the new system."
 EOF
 
 chmod 755 \
@@ -1287,10 +1364,10 @@ class MechScope(QMainWindow):
         QApplication.quit()
 
     def reboot(self):
-        subprocess.Popen(["sudo", "-n", "systemctl", "reboot"])
+        subprocess.Popen(["systemctl", "reboot"])
 
     def poweroff(self):
-        subprocess.Popen(["sudo", "-n", "systemctl", "poweroff"])
+        subprocess.Popen(["systemctl", "poweroff"])
 
 app = QApplication(sys.argv)
 app.setApplicationName("MechScope")
@@ -1317,7 +1394,18 @@ EOF
 # Gaming session by restarting SDDM.
 cat > /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope << "EOF"
 #!/usr/bin/env bash
-exec sudo -n systemctl restart sddm
+set -euo pipefail
+
+# Logging out is enough because SDDM is configured to auto-login to the
+# MechOS Gaming session. This avoids requiring passwordless sudo on an
+# installed system.
+if command -v qdbus6 >/dev/null 2>&1; then
+  qdbus6 org.kde.Shutdown /Shutdown logout || true
+elif command -v qdbus >/dev/null 2>&1; then
+  qdbus org.kde.Shutdown /Shutdown logout || true
+else
+  loginctl terminate-session "${XDG_SESSION_ID:-}" 2>/dev/null || true
+fi
 EOF
 chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope
 
@@ -1483,6 +1571,266 @@ sed -i "s/^iso_label=.*/iso_label=\"MECHOS_$(date +%Y%m)\"/" /workspace/archlive
 sed -i "s/^iso_publisher=.*/iso_publisher=\"MechOS\"/" /workspace/archlive/profiledef.sh
 sed -i "s/^iso_application=.*/iso_application=\"MechOS Arch + MechScope + Creator GUI + Performance\"/" /workspace/archlive/profiledef.sh
 
+
+# ---------- FULL INSTALLED-SYSTEM DEPLOYMENT ----------
+mkdir -p /workspace/archlive/airootfs/usr/share/mechos/install-payload
+
+cat > /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target << "TARGETEOF"
+#!/usr/bin/env bash
+set -euxo pipefail
+
+PORT=45811
+BASE_URL="http://127.0.0.1:${PORT}"
+PAYLOAD="/tmp/mechos-rootfs.tar.zst"
+LOG="/var/log/mechos-postinstall.log"
+
+exec > >(tee -a "$LOG") 2>&1
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "MechOS post-install must run as root." >&2
+  exit 1
+fi
+
+echo "=== MechOS post-install starting ==="
+
+# Steam and 32-bit gaming libraries need multilib.
+if grep -q '^\#\[multilib\]' /etc/pacman.conf 2>/dev/null; then
+  sed -i "/^\#\[multilib\]/,/^\#Include = \/etc\/pacman.d\/mirrorlist/ s/^\#//" /etc/pacman.conf
+fi
+
+pacman -Sy --noconfirm
+
+# The installed machine gets the same core experience as the live ISO.
+# GPU-specific NVIDIA modules are selected later by mechos-gpu-setup.
+pacman -S --needed --noconfirm \
+  plasma-meta sddm konsole dolphin ark kate kdialog firefox \
+  networkmanager network-manager-applet bluez bluez-utils \
+  pipewire pipewire-alsa pipewire-pulse wireplumber \
+  xdg-desktop-portal xdg-desktop-portal-kde \
+  steam gamescope lutris gamemode lib32-gamemode \
+  mangohud lib32-mangohud wine wine-mono wine-gecko \
+  winetricks protontricks vulkan-tools \
+  mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon \
+  vulkan-intel lib32-vulkan-intel \
+  linux-headers linux-firmware \
+  ntfs-3g exfatprogs btrfs-progs dosfstools e2fsprogs f2fs-tools xfsprogs \
+  git git-lfs curl wget unzip zip p7zip sudo flatpak \
+  base-devel cmake ninja clang python python-pip python-pygame python-pyqt6 \
+  ffmpeg blender obs-studio kdenlive krita \
+  plymouth zram-generator power-profiles-daemon irqbalance cpupower \
+  amd-ucode intel-ucode switcheroo-control nvidia-prime \
+  smartmontools nvme-cli btop libva-utils pciutils usbutils \
+  gpu-screen-recorder gpu-screen-recorder-ui intel-media-driver libva-mesa-driver
+
+curl -fsSL "$BASE_URL/mechos-rootfs.tar.zst" -o "$PAYLOAD"
+tar --zstd -xpf "$PAYLOAD" -C /
+rm -f "$PAYLOAD"
+
+# Pick the first real wheel/sudo user created by Archinstall.
+MECHOS_USER="$(
+  awk -F: '$3 >= 1000 && $3 < 60000 {print $1}' /etc/passwd |
+  while read -r u; do
+    if id -nG "$u" 2>/dev/null | grep -qw wheel; then
+      echo "$u"
+      break
+    fi
+  done
+)"
+
+if [ -z "${MECHOS_USER:-}" ]; then
+  MECHOS_USER="$(awk -F: '$3 >= 1000 && $3 < 60000 {print $1; exit}' /etc/passwd)"
+fi
+
+if [ -z "${MECHOS_USER:-}" ]; then
+  echo "Could not identify the installed desktop user." >&2
+  exit 1
+fi
+
+echo "Configuring MechOS for user: $MECHOS_USER"
+
+# Installed machines use their real account, never the live 'mechos' account.
+rm -f /etc/sudoers.d/10-mechos-live
+rm -f /usr/lib/sysusers.d/mechos.conf
+rm -f /usr/lib/tmpfiles.d/mechos.conf
+rm -f /etc/xdg/autostart/mechos-live-welcome.desktop
+
+mkdir -p /etc/sddm.conf.d
+cat > /etc/sddm.conf.d/mechos.conf <<SDDMEOF
+[Autologin]
+User=$MECHOS_USER
+Session=mechos-gaming.desktop
+Relogin=true
+SDDMEOF
+
+# Creator folders belong to the real installed user.
+HOME_DIR="$(getent passwd "$MECHOS_USER" | cut -d: -f6)"
+mkdir -p \
+  "$HOME_DIR/MechOS/Projects" \
+  "$HOME_DIR/MechOS/Assets" \
+  "$HOME_DIR/MechOS/Recordings" \
+  "$HOME_DIR/MechOS/Exports" \
+  "$HOME_DIR/Desktop"
+
+cp -f /usr/share/applications/mechos-return-to-mechscope.desktop \
+  "$HOME_DIR/Desktop/Return-to-MechScope.desktop" 2>/dev/null || true
+cp -f /usr/share/applications/mechos-performance-center.desktop \
+  "$HOME_DIR/Desktop/Performance-Center.desktop" 2>/dev/null || true
+chown -R "$MECHOS_USER:$MECHOS_USER" "$HOME_DIR/MechOS" "$HOME_DIR/Desktop"
+chmod +x "$HOME_DIR/Desktop/"*.desktop 2>/dev/null || true
+
+# Stable services.
+systemctl enable NetworkManager.service
+systemctl enable bluetooth.service 2>/dev/null || true
+systemctl enable sddm.service
+systemctl enable fstrim.timer 2>/dev/null || true
+systemctl enable irqbalance.service 2>/dev/null || true
+systemctl enable power-profiles-daemon.service 2>/dev/null || true
+systemctl enable switcheroo-control.service 2>/dev/null || true
+systemctl enable mechos-firstboot.service 2>/dev/null || true
+
+# Keep NetworkManager as the one network manager.
+systemctl disable systemd-networkd.service 2>/dev/null || true
+systemctl disable systemd-networkd-wait-online.service 2>/dev/null || true
+
+# Plymouth boot theme + quiet graphical handoff.
+mkdir -p /etc/plymouth
+cat > /etc/plymouth/plymouthd.conf <<'PLYEOF'
+[Daemon]
+Theme=mechos
+ShowDelay=0
+DeviceTimeout=8
+PLYEOF
+
+if [ -f /etc/mkinitcpio.conf ]; then
+  if grep -q '^HOOKS=' /etc/mkinitcpio.conf && ! grep -q 'plymouth' /etc/mkinitcpio.conf; then
+    if grep -q ' systemd ' /etc/mkinitcpio.conf; then
+      sed -i -E 's/( systemd)( )/\1 plymouth\2/' /etc/mkinitcpio.conf
+    elif grep -q ' udev ' /etc/mkinitcpio.conf; then
+      sed -i -E 's/( udev)( )/\1 plymouth\2/' /etc/mkinitcpio.conf
+    fi
+  fi
+fi
+
+mkinitcpio -P || true
+
+# systemd-boot entries
+if [ -d /boot/loader/entries ]; then
+  for entry in /boot/loader/entries/*.conf; do
+    [ -f "$entry" ] || continue
+    if grep -q '^options ' "$entry" && ! grep -q ' splash' "$entry"; then
+      sed -i '/^options / s/$/ quiet splash loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0/' "$entry"
+    fi
+    sed -i 's/^title .*/title MechOS/' "$entry" 2>/dev/null || true
+  done
+fi
+
+# GRUB installations
+if [ -f /etc/default/grub ]; then
+  if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
+    sed -i -E 's|^GRUB_CMDLINE_LINUX_DEFAULT="(.*)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 quiet splash loglevel=3 rd.systemd.show_status=auto"|' /etc/default/grub
+  else
+    echo 'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3 rd.systemd.show_status=auto"' >> /etc/default/grub
+  fi
+  command -v grub-mkconfig >/dev/null 2>&1 && grub-mkconfig -o /boot/grub/grub.cfg || true
+fi
+
+# Apply GPU-specific packages after the common graphics stack is installed.
+# If an older NVIDIA card needs a legacy branch, this can fail without
+# breaking the rest of the MechOS install.
+if /usr/local/bin/mechos-gpu-setup --apply; then
+  echo "GPU-specific setup completed."
+else
+  echo "GPU-specific setup needs review; base graphics stack remains installed."
+fi
+
+mkdir -p /var/lib/mechos
+cat > /etc/mechos-release <<'RELEASEEOF'
+NAME="MechOS"
+VERSION="0.1.5 Alpha"
+ID=mechos
+ID_LIKE=arch
+VARIANT="Gaming + Creator"
+RELEASEEOF
+
+touch /var/lib/mechos/installed
+
+echo "=== MechOS post-install complete ==="
+echo "Installed user: $MECHOS_USER"
+echo "Default session: MechOS Gaming Mode / MechScope"
+TARGETEOF
+chmod 755 /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
+
+# Partial Archinstall config: it does NOT choose or wipe a disk. The TUI still
+# requires the user to make and confirm those choices. This only injects the
+# package needed to retrieve the local payload plus the post-install commands.
+cat > /workspace/archlive/airootfs/usr/share/mechos/install-payload/archinstall-mechos.json <<'JSONEOF'
+{
+  "packages": [
+    "curl"
+  ],
+  "custom_commands": [
+    "curl -fsSL http://127.0.0.1:45811/mechos-postinstall-target -o /root/mechos-postinstall-target",
+    "chmod 755 /root/mechos-postinstall-target",
+    "/root/mechos-postinstall-target"
+  ]
+}
+JSONEOF
+
+# Stage only installed-system MechOS files. Live-only account/sudo/welcome
+# configuration is intentionally excluded.
+PAYLOAD_STAGE="/tmp/mechos-installed-rootfs"
+rm -rf "$PAYLOAD_STAGE"
+mkdir -p "$PAYLOAD_STAGE"
+
+copy_payload() {
+  local src="$1"
+  if [ -e "/workspace/archlive/airootfs$src" ]; then
+    mkdir -p "$PAYLOAD_STAGE$(dirname "$src")"
+    cp -a "/workspace/archlive/airootfs$src" "$PAYLOAD_STAGE$src"
+  fi
+}
+
+for f in \
+  /usr/local/bin/mechscope \
+  /usr/local/bin/mechos-creator-mode \
+  /usr/local/bin/mechos-creator-session \
+  /usr/local/bin/mechos-gaming-session \
+  /usr/local/bin/mechos-return-to-mechscope \
+  /usr/local/bin/mechos-performance-center \
+  /usr/local/bin/mechos-session-select \
+  /usr/local/bin/mechos-gpu-setup \
+  /usr/local/bin/mechos-update \
+  /usr/local/bin/mechos-creator-setup \
+  /usr/local/bin/mechos-firstboot \
+  /usr/share/applications/mechscope.desktop \
+  /usr/share/applications/mechos-return-to-mechscope.desktop \
+  /usr/share/applications/mechos-performance-center.desktop \
+  /usr/share/wayland-sessions/mechos-gaming.desktop \
+  /usr/share/wayland-sessions/mechos-creator.desktop \
+  /usr/share/mechos/branding \
+  /usr/share/plymouth/themes/mechos \
+  /usr/share/pixmaps/mechos.png \
+  /etc/plymouth/plymouthd.conf \
+  /etc/systemd/zram-generator.conf \
+  /etc/sysctl.d/90-mechos-performance.conf \
+  /etc/gamemode.ini \
+  /etc/systemd/system/mechos-firstboot.service \
+  /usr/share/doc/mechos
+do
+  copy_payload "$f"
+done
+
+tar --zstd -cpf \
+  /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst \
+  -C "$PAYLOAD_STAGE" .
+
+rm -rf "$PAYLOAD_STAGE"
+
+test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst
+test -x /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
+test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/archinstall-mechos.json
+
+
 # ArchISO-authoritative permissions. These prevent launchers from
 # losing executable bits inside the final SquashFS image.
 cat >> /workspace/archlive/profiledef.sh << "EOF"
@@ -1500,6 +1848,9 @@ file_permissions["/usr/local/bin/mechos-session-select"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-gpu-setup"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-update"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-creator-setup"]="0:0:755"
+file_permissions["/usr/share/mechos/install-payload/mechos-postinstall-target"]="0:0:755"
+file_permissions["/usr/share/mechos/install-payload/archinstall-mechos.json"]="0:0:644"
+file_permissions["/usr/share/mechos/install-payload/mechos-rootfs.tar.zst"]="0:0:644"
 file_permissions["/usr/share/mechos/branding/mechos-logo.png"]="0:0:644"
 file_permissions["/etc/sudoers.d/10-mechos-live"]="0:0:440"
 EOF
@@ -1528,6 +1879,11 @@ test -x /workspace/archlive/airootfs/usr/local/bin/mechos-session-select
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-gpu-setup
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-update
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-setup
+test -x /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
+test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst
+test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/archinstall-mechos.json
+grep -q '"custom_commands"' /workspace/archlive/airootfs/usr/share/mechos/install-payload/archinstall-mechos.json
+grep -q 'MechOS post-install complete' /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
 grep -q 'mechos-firstboot' /workspace/archlive/profiledef.sh
 grep -q 'mechos-session-select' /workspace/archlive/profiledef.sh
 grep -q 'mechos-gpu-setup' /workspace/archlive/profiledef.sh
