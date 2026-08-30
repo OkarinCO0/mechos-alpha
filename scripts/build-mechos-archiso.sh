@@ -340,6 +340,7 @@ class CreatorWindow(QMainWindow):
             ("VRChat Creator\nSetup", lambda: open_url("https://vcc.docs.vrchat.com/")),
             ("MechClip AI\nClip Workflow", self.open_mechclip),
             ("Performance Center\nGPU / CPU / Power", lambda: spawn(["/usr/local/bin/mechos-performance-center"])),
+            ("Update Center\nSystem / Flatpak Updates", lambda: spawn(["/usr/local/bin/mechos-update-center"])),
         ]))
         v.addSpacing(18)
         self.section(v, "System")
@@ -645,18 +646,572 @@ set -euo pipefail
 if [ -e /run/archiso/bootmnt ] || grep -q 'archiso' /proc/cmdline 2>/dev/null; then
   echo "MechOS is running from the live ISO. Updates would not persist."
   if command -v kdialog >/dev/null 2>&1; then
-    kdialog --title "MechOS Update" --sorry \
-      "This is the live ISO. Install MechOS before using the system updater."
+    kdialog --title "MechOS Update Center" --sorry \
+      "This is the MechOS live ISO. Install MechOS before using the updater."
   fi
   exit 2
 fi
 
-sudo pacman -Syu
-if command -v flatpak >/dev/null 2>&1; then
-  flatpak update -y || true
+if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v python3 >/dev/null 2>&1; then
+  exec /usr/local/bin/mechos-update-center
 fi
-echo "MechOS update complete."
+
+exec sudo /usr/local/bin/mechos-update-helper apply
 EOF
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-update-helper << "EOF"
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_DIR="/var/lib/mechos"
+CACHE_DIR="/var/cache/mechos"
+LOG_DIR="/var/log/mechos"
+HISTORY="$STATE_DIR/update-history.log"
+LAST_RESULT="$STATE_DIR/last-update-result"
+REBOOT_MARKER="$STATE_DIR/reboot-required"
+
+mkdir -p "$STATE_DIR" "$CACHE_DIR" "$LOG_DIR" 2>/dev/null || true
+
+is_live() {
+  [ -e /run/archiso/bootmnt ] || grep -q 'archiso' /proc/cmdline 2>/dev/null
+}
+
+require_installed() {
+  if is_live; then
+    echo "ERROR: Updates are disabled in the MechOS live ISO."
+    exit 2
+  fi
+}
+
+check_updates() {
+  require_installed
+
+  echo "MECHOS_UPDATE_CHECK_BEGIN"
+
+  local pacman_count=0
+  local flatpak_count=0
+  local updates=""
+
+  if command -v checkupdates >/dev/null 2>&1; then
+    updates="$(checkupdates 2>/dev/null || true)"
+    if [ -n "$updates" ]; then
+      echo "PACMAN_UPDATES_BEGIN"
+      printf '%s\n' "$updates"
+      echo "PACMAN_UPDATES_END"
+      pacman_count="$(printf '%s\n' "$updates" | sed '/^[[:space:]]*$/d' | wc -l)"
+    fi
+  else
+    echo "WARN: checkupdates is unavailable."
+  fi
+
+  if command -v flatpak >/dev/null 2>&1; then
+    local flatpak_updates=""
+    flatpak_updates="$(
+      {
+        flatpak remote-ls --system --updates --columns=application 2>/dev/null || true
+        flatpak remote-ls --user --updates --columns=application 2>/dev/null || true
+      } | sed '/^[[:space:]]*$/d' | sort -u
+    )"
+    if [ -n "$flatpak_updates" ]; then
+      echo "FLATPAK_UPDATES_BEGIN"
+      printf '%s\n' "$flatpak_updates"
+      echo "FLATPAK_UPDATES_END"
+      flatpak_count="$(printf '%s\n' "$flatpak_updates" | wc -l)"
+    fi
+  fi
+
+  echo "PACMAN_COUNT=$pacman_count"
+  echo "FLATPAK_COUNT=$flatpak_count"
+  echo "TOTAL_COUNT=$((pacman_count + flatpak_count))"
+  echo "MECHOS_UPDATE_CHECK_END"
+}
+
+create_snapshot_if_possible() {
+  if ! command -v snapper >/dev/null 2>&1; then
+    echo "[snapshot] snapper is not installed; skipping snapshot."
+    return 0
+  fi
+
+  if ! snapper -c root list >/dev/null 2>&1; then
+    echo "[snapshot] No configured root Snapper profile; skipping snapshot."
+    return 0
+  fi
+
+  echo "[snapshot] Creating pre-update snapshot..."
+  snapper -c root create \
+    --type single \
+    --description "MechOS pre-update $(date -Is)" \
+    --cleanup-algorithm number || {
+      echo "[snapshot] Snapshot creation failed; continuing without it."
+      return 0
+    }
+  echo "[snapshot] Pre-update snapshot created."
+}
+
+apply_updates() {
+  require_installed
+
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: apply requires administrator privileges."
+    exit 1
+  fi
+
+  local stamp log pending packages_needing_reboot=0
+  stamp="$(date +'%Y%m%d-%H%M%S')"
+  log="$LOG_DIR/update-$stamp.log"
+  touch "$log"
+  chmod 644 "$log"
+
+  exec > >(tee -a "$log") 2>&1
+
+  echo "MECHOS_UPDATE_APPLY_BEGIN"
+  echo "Started: $(date -Is)"
+
+  pending="$(checkupdates 2>/dev/null || true)"
+  if printf '%s\n' "$pending" | awk '{print $1}' | grep -Eq '^(linux|linux-lts|linux-zen|linux-hardened|systemd|nvidia-open|nvidia-utils|mesa)$'; then
+    packages_needing_reboot=1
+  fi
+
+  create_snapshot_if_possible
+
+  echo "[pacman] Updating Arch/MechOS packages..."
+  if pacman -Syu --needed --noconfirm; then
+    echo "[pacman] System package update complete."
+  else
+    rc=$?
+    echo "FAILED pacman rc=$rc" > "$LAST_RESULT"
+    printf '%s | FAILED | pacman rc=%s | %s\n' "$(date -Is)" "$rc" "$log" >> "$HISTORY"
+    echo "MECHOS_UPDATE_APPLY_FAILED"
+    exit "$rc"
+  fi
+
+  if command -v flatpak >/dev/null 2>&1; then
+    echo "[flatpak] Updating system Flatpaks..."
+    flatpak update --system -y || true
+  fi
+
+  if [ "$packages_needing_reboot" -eq 1 ] || [ ! -d "/usr/lib/modules/$(uname -r)" ]; then
+    touch "$REBOOT_MARKER"
+    echo "REBOOT_REQUIRED=1"
+  else
+    rm -f "$REBOOT_MARKER"
+    echo "REBOOT_REQUIRED=0"
+  fi
+
+  echo "SUCCESS $(date -Is)" > "$LAST_RESULT"
+  printf '%s | SUCCESS | %s\n' "$(date -Is)" "$log" >> "$HISTORY"
+
+  # Keep the most recent 100 history rows.
+  tail -n 100 "$HISTORY" > "$HISTORY.tmp" || true
+  mv -f "$HISTORY.tmp" "$HISTORY" 2>/dev/null || true
+  chmod 644 "$HISTORY" "$LAST_RESULT" 2>/dev/null || true
+
+  echo "Finished: $(date -Is)"
+  echo "MECHOS_UPDATE_APPLY_END"
+}
+
+show_status() {
+  require_installed
+  echo "CHANNEL=stable"
+  echo "REBOOT_REQUIRED=$([ -e "$REBOOT_MARKER" ] && echo 1 || echo 0)"
+  echo "LAST_RESULT=$(cat "$LAST_RESULT" 2>/dev/null || echo 'No completed update yet')"
+  echo "HISTORY_FILE=$HISTORY"
+}
+
+case "${1:-}" in
+  check)
+    check_updates
+    ;;
+  apply)
+    apply_updates
+    ;;
+  status)
+    show_status
+    ;;
+  history)
+    cat "$HISTORY" 2>/dev/null || true
+    ;;
+  *)
+    echo "Usage: mechos-update-helper {check|apply|status|history}" >&2
+    exit 2
+    ;;
+esac
+EOF
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-update-center << "PYEOF"
+#!/usr/bin/env python3
+
+import os
+import subprocess
+import sys
+from datetime import datetime
+
+from PyQt6.QtCore import QProcess, Qt
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
+    QVBoxLayout, QWidget
+)
+
+HELPER = "/usr/local/bin/mechos-update-helper"
+
+STYLE = """
+QWidget {
+    background: #0b0712;
+    color: #f3eaff;
+    font-family: Sans Serif;
+}
+QFrame#panel {
+    background: #15101f;
+    border: 1px solid #332342;
+    border-radius: 14px;
+}
+QPushButton {
+    background: #251532;
+    border: 1px solid #6f3b94;
+    border-radius: 10px;
+    padding: 11px 18px;
+    font-weight: 600;
+}
+QPushButton:hover {
+    background: #342044;
+    border-color: #a85de0;
+}
+QPushButton:disabled {
+    color: #756c7c;
+    border-color: #332b39;
+    background: #17131b;
+}
+QPlainTextEdit {
+    background: #08060c;
+    border: 1px solid #332342;
+    border-radius: 9px;
+    padding: 8px;
+    font-family: Monospace;
+}
+QProgressBar {
+    background: #09070e;
+    border: 1px solid #332342;
+    border-radius: 7px;
+    text-align: center;
+    min-height: 18px;
+}
+QProgressBar::chunk {
+    background: #7c3fad;
+    border-radius: 6px;
+}
+"""
+
+class UpdateCenter(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.proc = None
+        self.check_buffer = ""
+        self.update_count = 0
+        self.setWindowTitle("MechOS Update Center")
+        self.resize(1040, 720)
+        self.setStyleSheet(STYLE)
+        self.build_ui()
+        self.load_status()
+        self.check_updates()
+
+    def panel(self):
+        frame = QFrame()
+        frame.setObjectName("panel")
+        return frame
+
+    def build_ui(self):
+        root = QWidget()
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(18)
+
+        top = QHBoxLayout()
+        title_box = QVBoxLayout()
+        title = QLabel("MECHOS UPDATE CENTER")
+        title.setFont(QFont("Sans Serif", 24, QFont.Weight.Bold))
+        subtitle = QLabel("System packages • Flatpaks • update history • recovery snapshot support")
+        subtitle.setStyleSheet("color:#b4a5bf;")
+        title_box.addWidget(title)
+        title_box.addWidget(subtitle)
+        top.addLayout(title_box)
+        top.addStretch()
+
+        self.channel = QLabel("CHANNEL  STABLE")
+        self.channel.setStyleSheet(
+            "background:#1e1328;border:1px solid #674080;border-radius:9px;"
+            "padding:8px 14px;font-weight:700;"
+        )
+        top.addWidget(self.channel)
+        layout.addLayout(top)
+
+        cards = QHBoxLayout()
+
+        status_panel = self.panel()
+        sl = QVBoxLayout(status_panel)
+        sl.addWidget(QLabel("SYSTEM STATUS"))
+        self.status_label = QLabel("Checking…")
+        self.status_label.setFont(QFont("Sans Serif", 18, QFont.Weight.Bold))
+        sl.addWidget(self.status_label)
+        self.details_label = QLabel("Looking for available updates")
+        self.details_label.setStyleSheet("color:#b4a5bf;")
+        self.details_label.setWordWrap(True)
+        sl.addWidget(self.details_label)
+        cards.addWidget(status_panel, 2)
+
+        reboot_panel = self.panel()
+        rl = QVBoxLayout(reboot_panel)
+        rl.addWidget(QLabel("RESTART"))
+        self.reboot_label = QLabel("Not required")
+        self.reboot_label.setFont(QFont("Sans Serif", 18, QFont.Weight.Bold))
+        rl.addWidget(self.reboot_label)
+        self.reboot_button = QPushButton("Restart MechOS")
+        self.reboot_button.clicked.connect(self.reboot)
+        self.reboot_button.setEnabled(False)
+        rl.addWidget(self.reboot_button)
+        cards.addWidget(reboot_panel, 1)
+
+        layout.addLayout(cards)
+
+        action_panel = self.panel()
+        al = QVBoxLayout(action_panel)
+
+        buttons = QHBoxLayout()
+        self.check_button = QPushButton("Check for Updates")
+        self.check_button.clicked.connect(self.check_updates)
+        buttons.addWidget(self.check_button)
+
+        self.update_button = QPushButton("Install Updates")
+        self.update_button.clicked.connect(self.apply_updates)
+        self.update_button.setEnabled(False)
+        buttons.addWidget(self.update_button)
+
+        self.history_button = QPushButton("Refresh History")
+        self.history_button.clicked.connect(self.load_history)
+        buttons.addWidget(self.history_button)
+        buttons.addStretch()
+        al.addLayout(buttons)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.progress.setFormat("Ready")
+        al.addWidget(self.progress)
+
+        layout.addWidget(action_panel)
+
+        content = QHBoxLayout()
+
+        log_panel = self.panel()
+        ll = QVBoxLayout(log_panel)
+        ll.addWidget(QLabel("UPDATE OUTPUT"))
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setPlaceholderText("Update information will appear here.")
+        ll.addWidget(self.log)
+        content.addWidget(log_panel, 2)
+
+        history_panel = self.panel()
+        hl = QVBoxLayout(history_panel)
+        hl.addWidget(QLabel("RECENT UPDATE HISTORY"))
+        self.history = QPlainTextEdit()
+        self.history.setReadOnly(True)
+        hl.addWidget(self.history)
+        content.addWidget(history_panel, 1)
+
+        layout.addLayout(content, 1)
+
+        note = QLabel(
+            "Safety: MechOS Update Center never updates the disposable Live ISO. "
+            "When a root Snapper profile exists, it creates a pre-update snapshot automatically. "
+            "Stable is the only active MechOS update channel in this Alpha build."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color:#9d8ca9;")
+        layout.addWidget(note)
+
+        self.setCentralWidget(root)
+
+    def append(self, text):
+        if text:
+            self.log.appendPlainText(text.rstrip())
+
+    def set_busy(self, busy, label):
+        self.check_button.setEnabled(not busy)
+        self.update_button.setEnabled((not busy) and self.update_count > 0)
+        self.history_button.setEnabled(not busy)
+        if busy:
+            self.progress.setRange(0, 0)
+            self.progress.setFormat(label)
+        else:
+            self.progress.setRange(0, 1)
+            self.progress.setValue(1)
+            self.progress.setFormat(label)
+
+    def run_process(self, args, mode, privileged=False):
+        if self.proc is not None:
+            return
+
+        self.proc = QProcess(self)
+        self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.proc.readyReadStandardOutput.connect(self.read_output)
+
+        if mode == "check":
+            self.check_buffer = ""
+
+        self.proc.finished.connect(lambda code, status: self.finished(mode, code))
+
+        if privileged:
+            program = "pkexec"
+            pargs = [HELPER] + args
+        else:
+            program = HELPER
+            pargs = args
+
+        self.proc.start(program, pargs)
+
+    def read_output(self):
+        if not self.proc:
+            return
+        data = bytes(self.proc.readAllStandardOutput()).decode(errors="replace")
+        self.append(data)
+        self.check_buffer += data
+
+    def check_updates(self):
+        self.log.clear()
+        self.status_label.setText("Checking…")
+        self.details_label.setText("Scanning Arch packages and Flatpaks")
+        self.set_busy(True, "Checking for updates…")
+        self.run_process(["check"], "check", False)
+
+    def apply_updates(self):
+        if self.update_count <= 0:
+            return
+
+        response = QMessageBox.question(
+            self,
+            "Install MechOS Updates",
+            f"Install {self.update_count} available update(s)?\n\n"
+            "Administrator authorization will be requested. "
+            "A pre-update snapshot will be created automatically when Snapper is configured.",
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            return
+
+        self.log.clear()
+        self.set_busy(True, "Installing updates…")
+        self.status_label.setText("Updating")
+        self.details_label.setText("Do not power off MechOS while packages are being installed.")
+        self.run_process(["apply"], "apply", True)
+
+    def finished(self, mode, code):
+        output = self.check_buffer
+        self.proc = None
+
+        if mode == "check":
+            if code == 2:
+                self.status_label.setText("Live ISO")
+                self.details_label.setText("Install MechOS before using Update Center.")
+                self.update_count = 0
+                self.set_busy(False, "Updates disabled in Live ISO")
+                return
+
+            total = 0
+            for line in output.splitlines():
+                if line.startswith("TOTAL_COUNT="):
+                    try:
+                        total = int(line.split("=", 1)[1])
+                    except ValueError:
+                        pass
+
+            self.update_count = total
+            if total:
+                self.status_label.setText(f"{total} update(s) available")
+                self.details_label.setText("Updates are ready to install.")
+                self.update_button.setEnabled(True)
+                self.set_busy(False, "Updates available")
+            else:
+                self.status_label.setText("Up to date")
+                self.details_label.setText("No Arch or Flatpak updates were found.")
+                self.update_button.setEnabled(False)
+                self.set_busy(False, "System is current")
+
+        elif mode == "apply":
+            if code == 0:
+                self.status_label.setText("Update complete")
+                self.details_label.setText("MechOS finished installing available updates.")
+                self.update_count = 0
+                self.set_busy(False, "Update completed")
+                self.load_status()
+                self.load_history()
+            else:
+                self.status_label.setText("Update failed")
+                self.details_label.setText("Review Update Output for the failure details.")
+                self.set_busy(False, f"Update failed (code {code})")
+                QMessageBox.warning(
+                    self,
+                    "MechOS Update",
+                    "The update did not complete successfully. "
+                    "No further update actions were started. Review the log shown in Update Center.",
+                )
+
+    def load_status(self):
+        try:
+            out = subprocess.check_output([HELPER, "status"], text=True, stderr=subprocess.STDOUT)
+        except Exception:
+            return
+
+        reboot = "REBOOT_REQUIRED=1" in out
+        self.reboot_label.setText("Required" if reboot else "Not required")
+        self.reboot_button.setEnabled(reboot)
+        self.load_history()
+
+    def load_history(self):
+        try:
+            out = subprocess.check_output([HELPER, "history"], text=True, stderr=subprocess.STDOUT)
+        except Exception:
+            out = ""
+        rows = [r for r in out.splitlines() if r.strip()]
+        self.history.setPlainText("\n".join(reversed(rows[-30:])) if rows else "No completed updates yet.")
+
+    def reboot(self):
+        response = QMessageBox.question(
+            self,
+            "Restart MechOS",
+            "Restart now to finish applying system updates?"
+        )
+        if response == QMessageBox.StandardButton.Yes:
+            QProcess.startDetached("systemctl", ["reboot"])
+
+def main():
+    app = QApplication(sys.argv)
+    win = UpdateCenter()
+    win.show()
+    sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()
+PYEOF
+
+chmod 755 \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-update \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-update-helper \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-update-center
+
+mkdir -p /workspace/archlive/airootfs/usr/share/applications
+cat > /workspace/archlive/airootfs/usr/share/applications/mechos-update-center.desktop << "EOF"
+[Desktop Entry]
+Type=Application
+Name=MechOS Update Center
+Comment=Check for and install MechOS system updates
+Exec=/usr/local/bin/mechos-update-center
+Icon=system-software-update
+Terminal=false
+Categories=System;Settings;
+Keywords=MechOS;Update;Upgrade;Packages;Pacman;Flatpak;
+EOF
+
 
 cat > /workspace/archlive/airootfs/usr/local/bin/mechos-creator-setup << "EOF"
 #!/usr/bin/env bash
@@ -1265,6 +1820,7 @@ class MechScope(QMainWindow):
         self.add_button("🖥  Desktop Mode", lambda: self.switch_mode("desktop"))
         self.add_button("🛠  Creator Mode", lambda: self.switch_mode("creator"))
         self.add_button("⚡  Performance Center", self.open_performance)
+        self.add_button("🔄  Update Center", self.open_updates)
         self.add_button("↻  Restart MechOS", self.reboot)
         self.add_button("⏻  Shut Down", self.poweroff)
 
@@ -1350,6 +1906,9 @@ class MechScope(QMainWindow):
 
     def open_performance(self):
         subprocess.Popen(["/usr/local/bin/mechos-performance-center"])
+
+    def open_updates(self):
+        subprocess.Popen(["/usr/local/bin/mechos-update-center"])
 
     def switch_mode(self, mode):
         if FALLBACK:
@@ -1619,7 +2178,7 @@ pacman -S --needed --noconfirm \
   ffmpeg blender obs-studio kdenlive krita \
   plymouth zram-generator power-profiles-daemon irqbalance cpupower \
   amd-ucode intel-ucode switcheroo-control nvidia-prime \
-  smartmontools nvme-cli btop libva-utils pciutils usbutils \
+  smartmontools nvme-cli btop pacman-contrib snapper libva-utils pciutils usbutils \
   gpu-screen-recorder gpu-screen-recorder-ui intel-media-driver libva-mesa-driver
 
 curl -fsSL "$BASE_URL/mechos-rootfs.tar.zst" -o "$PAYLOAD"
@@ -1800,6 +2359,9 @@ for f in \
   /usr/local/bin/mechos-session-select \
   /usr/local/bin/mechos-gpu-setup \
   /usr/local/bin/mechos-update \
+  /usr/local/bin/mechos-update-helper \
+  /usr/local/bin/mechos-update-center \
+  /usr/share/applications/mechos-update-center.desktop \
   /usr/local/bin/mechos-creator-setup \
   /usr/local/bin/mechos-firstboot \
   /usr/share/applications/mechscope.desktop \
@@ -1847,6 +2409,8 @@ file_permissions["/usr/local/bin/mechos-live-welcome"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-session-select"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-gpu-setup"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-update"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-update-helper"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-update-center"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-creator-setup"]="0:0:755"
 file_permissions["/usr/share/mechos/install-payload/mechos-postinstall-target"]="0:0:755"
 file_permissions["/usr/share/mechos/install-payload/archinstall-mechos.json"]="0:0:644"
@@ -1878,6 +2442,11 @@ test -x /workspace/archlive/airootfs/usr/local/bin/mechos-live-welcome
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-session-select
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-gpu-setup
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-update
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-update-helper
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-update-center
+test -s /workspace/archlive/airootfs/usr/share/applications/mechos-update-center.desktop
+grep -q 'MECHOS UPDATE CENTER' /workspace/archlive/airootfs/usr/local/bin/mechos-update-center
+grep -q 'checkupdates' /workspace/archlive/airootfs/usr/local/bin/mechos-update-helper
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-setup
 test -x /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
 test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst
@@ -1891,6 +2460,9 @@ test -f /workspace/archlive/airootfs/etc/systemd/zram-generator.conf
 test -L /workspace/archlive/airootfs/etc/systemd/system/timers.target.wants/fstrim.timer
 test -L /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/irqbalance.service
 grep -q "Performance Center" /workspace/archlive/airootfs/usr/local/bin/mechscope
+grep -q "Update Center" /workspace/archlive/airootfs/usr/local/bin/mechscope
+grep -q "mechos-update-center" /workspace/archlive/airootfs/usr/local/bin/mechscope
+grep -q "Update Center" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 grep -q "Steam Library" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "Creator Dashboard" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 test -s /workspace/archlive/airootfs/usr/share/mechos/branding/mechos-logo.png
