@@ -1468,23 +1468,18 @@ park_cores=no
 pin_cores=no
 EOF
 
-# Enable stable system services using direct systemd wants links.
+# ---------- LIVE-BOOT SERVICE POLICY ----------
+# Keep the live ISO lean. These maintenance/performance services are installed
+# in the image but are enabled only after MechOS is installed.
 mkdir -p /workspace/archlive/airootfs/etc/systemd/system/timers.target.wants
 mkdir -p /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants
 
-# Weekly SSD/NVMe TRIM.
-ln -sf /usr/lib/systemd/system/fstrim.timer \
-  /workspace/archlive/airootfs/etc/systemd/system/timers.target.wants/fstrim.timer
-
-# Spread hardware interrupts across available CPU cores.
-ln -sf /usr/lib/systemd/system/irqbalance.service \
-  /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/irqbalance.service
-
-# KDE power-profile controls and hybrid-GPU discovery.
-ln -sf /usr/lib/systemd/system/power-profiles-daemon.service \
-  /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/power-profiles-daemon.service
-ln -sf /usr/lib/systemd/system/switcheroo-control.service \
-  /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/switcheroo-control.service
+rm -f \
+  /workspace/archlive/airootfs/etc/systemd/system/timers.target.wants/fstrim.timer \
+  /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/irqbalance.service \
+  /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/power-profiles-daemon.service \
+  /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/switcheroo-control.service \
+  || true
 
 # Graphical MechOS Performance Center.
 cat > /workspace/archlive/airootfs/usr/local/bin/mechos-performance-center << "PYEOF"
@@ -1685,7 +1680,8 @@ cat > /workspace/archlive/airootfs/etc/plymouth/plymouthd.conf << "EOF"
 [Daemon]
 Theme=mechos
 ShowDelay=0
-DeviceTimeout=8
+# Live media should not sit behind the splash waiting on a slow/virtual DRM device.
+DeviceTimeout=3
 EOF
 
 # Add Plymouth to whichever ArchISO mkinitcpio config owns HOOKS.
@@ -1998,44 +1994,156 @@ export MECHOS_MODE=gaming
 export STEAM_FORCE_DESKTOPUI_SCALING="${STEAM_FORCE_DESKTOPUI_SCALING:-1.0}"
 MODE_FILE="/tmp/mechos-next-mode-$(id -u)"
 
-# Real Gaming Mode: Gamescope hosts MechScope. MechScope launches
-# Steam Gamepad UI and writes the requested mode when switching.
-if command -v gamescope >/dev/null 2>&1 && \
-   command -v vulkaninfo >/dev/null 2>&1 && \
-   vulkaninfo --summary >/dev/null 2>&1; then
-  while true; do
-    rm -f "$MODE_FILE"
-    gamescope -e -f -- /usr/local/bin/mechscope
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/mechos"
+mkdir -p "$STATE_DIR"
+SESSION_LOG="$STATE_DIR/gaming-session.log"
+MECHSCOPE_LOG="$STATE_DIR/mechscope.log"
 
-    NEXT="$(cat "$MODE_FILE" 2>/dev/null || echo gaming)"
-    rm -f "$MODE_FILE"
+exec >>"$SESSION_LOG" 2>&1
+echo
+echo "===== MechOS Gaming Session $(date -Is) ====="
+echo "User: $(id)"
+echo "Session: ${XDG_SESSION_TYPE:-unknown}"
+echo "Desktop: ${XDG_CURRENT_DESKTOP:-unknown}"
 
-    case "$NEXT" in
-      desktop)
-        export MECHOS_MODE=desktop
-        exec /usr/bin/startplasma-wayland
-        ;;
-      creator)
-        exec /usr/local/bin/mechos-creator-session
-        ;;
-      gaming|"")
-        # Re-open MechScope if it was closed without choosing a mode.
-        continue
-        ;;
-    esac
-  done
+start_plasma_fallback() {
+  echo "[MechOS] Starting safe Plasma fallback."
+  export MECHOS_GAMING_FALLBACK=1
+
+  (
+    sleep 4
+    echo "===== MechScope fallback $(date -Is) =====" >>"$MECHSCOPE_LOG"
+    /usr/local/bin/mechscope >>"$MECHSCOPE_LOG" 2>&1
+  ) &
+
+  if command -v startplasma-wayland >/dev/null 2>&1; then
+    exec /usr/bin/startplasma-wayland
+  fi
+
+  echo "[MechOS] startplasma-wayland is unavailable; launching MechScope directly."
+  exec /usr/local/bin/mechscope
+}
+
+# Virtual machines are deliberately sent to Plasma fallback. Gamescope inside
+# nested/virtual graphics stacks is not required to test the MechOS UI and can
+# hang even when a Vulkan loader is technically present.
+if command -v systemd-detect-virt >/dev/null 2>&1; then
+  VIRT="$(systemd-detect-virt 2>/dev/null || true)"
+  if [ -n "$VIRT" ] && [ "$VIRT" != "none" ]; then
+    echo "[MechOS] Virtualization detected: $VIRT"
+    start_plasma_fallback
+  fi
 fi
 
-# VM / no-Vulkan fallback: enter Plasma but automatically show the
-# exact same MechScope switcher so its UI can still be tested.
-export MECHOS_GAMING_FALLBACK=1
-(
-  sleep 5
-  /usr/local/bin/mechscope >/dev/null 2>&1 &
-) &
-exec /usr/bin/startplasma-wayland
+# Never allow a broken Vulkan probe to block the login session forever.
+VULKAN_OK=0
+if command -v vulkaninfo >/dev/null 2>&1; then
+  if timeout 8s vulkaninfo --summary >/tmp/mechos-vulkan-summary.log 2>&1; then
+    VULKAN_OK=1
+    echo "[MechOS] Vulkan preflight passed."
+  else
+    RC=$?
+    echo "[MechOS] Vulkan preflight failed/timed out (rc=$RC)."
+  fi
+else
+  echo "[MechOS] vulkaninfo not found."
+fi
+
+if [ "$VULKAN_OK" -ne 1 ] || ! command -v gamescope >/dev/null 2>&1; then
+  start_plasma_fallback
+fi
+
+# Quick Gamescope smoke test. If Gamescope itself cannot create a compositor,
+# do not trap the user behind the boot splash.
+if ! timeout 12s gamescope -f -- /usr/bin/true >/tmp/mechos-gamescope-test.log 2>&1; then
+  RC=$?
+  echo "[MechOS] Gamescope smoke test failed/timed out (rc=$RC)."
+  start_plasma_fallback
+fi
+
+echo "[MechOS] Starting real Gamescope + MechScope mode."
+
+while true; do
+  rm -f "$MODE_FILE"
+
+  echo "===== MechScope Gamescope launch $(date -Is) =====" >>"$MECHSCOPE_LOG"
+  gamescope -e -f -- /usr/local/bin/mechscope >>"$MECHSCOPE_LOG" 2>&1
+  GS_RC=$?
+  echo "[MechOS] Gamescope/MechScope exited rc=$GS_RC"
+
+  NEXT="$(cat "$MODE_FILE" 2>/dev/null || echo gaming)"
+  rm -f "$MODE_FILE"
+
+  case "$NEXT" in
+    desktop)
+      export MECHOS_MODE=desktop
+      exec /usr/bin/startplasma-wayland
+      ;;
+    creator)
+      exec /usr/local/bin/mechos-creator-session
+      ;;
+    gaming|"")
+      # If Gamescope failed immediately, stop looping forever and give the user
+      # a usable Plasma session instead.
+      if [ "$GS_RC" -ne 0 ]; then
+        echo "[MechOS] Gamescope failed; entering safe fallback."
+        start_plasma_fallback
+      fi
+      continue
+      ;;
+    *)
+      echo "[MechOS] Unknown requested mode '$NEXT'; returning to MechScope."
+      continue
+      ;;
+  esac
+done
 EOF
 chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-boot-diagnostics << "EOF"
+#!/usr/bin/env bash
+set +e
+
+echo "=== MechOS Boot Diagnostics ==="
+echo
+echo "--- Virtualization ---"
+systemd-detect-virt 2>&1 || true
+echo
+echo "--- Session ---"
+printf 'XDG_SESSION_TYPE=%s\n' "${XDG_SESSION_TYPE:-}"
+printf 'XDG_CURRENT_DESKTOP=%s\n' "${XDG_CURRENT_DESKTOP:-}"
+echo
+echo "--- GPU ---"
+lspci 2>/dev/null | grep -Ei 'VGA|3D|Display' || true
+echo
+echo "--- Vulkan (8 second limit) ---"
+timeout 8s vulkaninfo --summary 2>&1 || true
+echo
+echo "--- SDDM ---"
+systemctl --no-pager --full status sddm.service 2>&1 || true
+echo
+echo "--- Boot timing ---"
+systemd-analyze time 2>&1 || true
+echo
+echo "--- Slowest boot units ---"
+systemd-analyze blame 2>&1 | head -n 30 || true
+echo
+echo "--- Critical boot chain ---"
+systemd-analyze critical-chain graphical.target 2>&1 || true
+echo
+echo "--- Gaming session log ---"
+cat "${XDG_STATE_HOME:-$HOME/.local/state}/mechos/gaming-session.log" 2>/dev/null || true
+echo
+echo "--- MechScope log ---"
+cat "${XDG_STATE_HOME:-$HOME/.local/state}/mechos/mechscope.log" 2>/dev/null || true
+echo
+echo "--- Gamescope smoke-test log ---"
+cat /tmp/mechos-gamescope-test.log 2>/dev/null || true
+echo
+echo "--- Vulkan preflight log ---"
+cat /tmp/mechos-vulkan-summary.log 2>/dev/null || true
+EOF
+chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-boot-diagnostics
 
 mkdir -p /workspace/archlive/airootfs/usr/share/wayland-sessions
 cat > /workspace/archlive/airootfs/usr/share/wayland-sessions/mechos-gaming.desktop << "EOF"
@@ -2110,6 +2218,14 @@ ln -sf /dev/null \
 ln -sf /usr/lib/systemd/system/NetworkManager.service \
   /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/NetworkManager.service
 
+# Never block the graphical live boot waiting for DHCP or internet access.
+rm -f \
+  /workspace/archlive/airootfs/etc/systemd/system/network-online.target.wants/NetworkManager-wait-online.service \
+  /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/NetworkManager-wait-online.service \
+  || true
+ln -sf /dev/null \
+  /workspace/archlive/airootfs/etc/systemd/system/NetworkManager-wait-online.service
+
 # Keep systemd-resolved for DNS, but do not let time synchronization
 # block the graphical boot if the VM/PC has no network yet.
 mkdir -p /workspace/archlive/airootfs/etc/systemd/system/sysinit.target.wants
@@ -2120,10 +2236,21 @@ ln -sf /run/systemd/resolve/stub-resolv.conf \
 ln -sf /dev/null \
   /workspace/archlive/airootfs/etc/systemd/system/systemd-time-wait-sync.service
 
-ln -sf /usr/lib/systemd/system/bluetooth.service \
-  /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/bluetooth.service
+# Bluetooth is available in the live image but is not part of the critical
+# boot path. The installed-system firstboot enables it permanently.
+rm -f /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/bluetooth.service || true
 ln -sf /usr/lib/systemd/system/sddm.service \
   /workspace/archlive/airootfs/etc/systemd/system/display-manager.service
+
+mkdir -p /workspace/archlive/airootfs/etc/systemd/system/sddm.service.d
+cat > /workspace/archlive/airootfs/etc/systemd/system/sddm.service.d/mechos-live.conf << "EOF"
+[Unit]
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+TimeoutStartSec=25s
+EOF
 
 sed -i "s/^iso_name=.*/iso_name=\"mechos\"/" /workspace/archlive/profiledef.sh
 sed -i "s/^iso_label=.*/iso_label=\"MECHOS_$(date +%Y%m)\"/" /workspace/archlive/profiledef.sh
@@ -2354,6 +2481,7 @@ for f in \
   /usr/local/bin/mechos-creator-mode \
   /usr/local/bin/mechos-creator-session \
   /usr/local/bin/mechos-gaming-session \
+  /usr/local/bin/mechos-boot-diagnostics \
   /usr/local/bin/mechos-return-to-mechscope \
   /usr/local/bin/mechos-performance-center \
   /usr/local/bin/mechos-session-select \
@@ -2400,6 +2528,7 @@ cat >> /workspace/archlive/profiledef.sh << "EOF"
 file_permissions["/usr/local/bin/mechos-creator-mode"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-creator-session"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-gaming-session"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-boot-diagnostics"]="0:0:755"
 file_permissions["/usr/local/bin/mechscope"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-return-to-mechscope"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-performance-center"]="0:0:755"
@@ -2433,6 +2562,14 @@ echo "=== MechOS pre-build validation ==="
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-boot-diagnostics
+test -L /workspace/archlive/airootfs/etc/systemd/system/NetworkManager-wait-online.service
+test "$(readlink /workspace/archlive/airootfs/etc/systemd/system/NetworkManager-wait-online.service)" = "/dev/null"
+test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/bluetooth.service
+test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/irqbalance.service
+test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/power-profiles-daemon.service
+test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/switcheroo-control.service
+grep -q 'DeviceTimeout=3' /workspace/archlive/airootfs/etc/plymouth/plymouthd.conf
 test -x /workspace/archlive/airootfs/usr/local/bin/mechscope
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-performance-center
@@ -2457,8 +2594,6 @@ grep -q 'mechos-firstboot' /workspace/archlive/profiledef.sh
 grep -q 'mechos-session-select' /workspace/archlive/profiledef.sh
 grep -q 'mechos-gpu-setup' /workspace/archlive/profiledef.sh
 test -f /workspace/archlive/airootfs/etc/systemd/zram-generator.conf
-test -L /workspace/archlive/airootfs/etc/systemd/system/timers.target.wants/fstrim.timer
-test -L /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/irqbalance.service
 grep -q "Performance Center" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "Update Center" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "mechos-update-center" /workspace/archlive/airootfs/usr/local/bin/mechscope
