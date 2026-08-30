@@ -67,6 +67,7 @@ e2fsprogs
 f2fs-tools
 xfsprogs
 openssh
+archinstall
 git
 git-lfs
 curl
@@ -525,6 +526,279 @@ Large tools are intentionally installed after OS setup:
 
 This keeps the bootable ISO small enough to build and update while preserving a
 graphical Creator Mode experience.
+EOF
+
+
+# ---------- CORE MECHOS SYSTEM UTILITIES ----------
+# These utilities existed in the earlier MechOS design and are restored here
+# explicitly instead of depending on an old overlay.
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-session-select << "EOF"
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODE="${1:-menu}"
+MODE_FILE="/tmp/mechos-next-mode-$(id -u)"
+
+choose_mode() {
+  if command -v kdialog >/dev/null 2>&1; then
+    kdialog --title "MechOS Mode Switcher" \
+      --menu "Choose a MechOS mode" \
+      gaming "Gaming Mode / MechScope" \
+      creator "Creator Mode" \
+      desktop "Desktop Mode" \
+      performance "Performance Center" 2>/dev/null || true
+  else
+    printf '%s\n' gaming
+  fi
+}
+
+if [ "$MODE" = "menu" ]; then
+  MODE="$(choose_mode)"
+fi
+
+case "$MODE" in
+  gaming)
+    if [ "${MECHOS_MODE:-}" = "gaming" ]; then
+      exit 0
+    fi
+    exec /usr/local/bin/mechos-return-to-mechscope
+    ;;
+  creator)
+    if [ "${MECHOS_MODE:-}" = "gaming" ]; then
+      printf '%s\n' creator > "$MODE_FILE"
+      pkill -TERM -f "/usr/local/bin/mechscope" 2>/dev/null || true
+      exit 0
+    fi
+    exec /usr/local/bin/mechos-creator-mode
+    ;;
+  desktop)
+    if [ "${MECHOS_MODE:-}" = "gaming" ]; then
+      printf '%s\n' desktop > "$MODE_FILE"
+      pkill -TERM -f "/usr/local/bin/mechscope" 2>/dev/null || true
+      exit 0
+    fi
+    exit 0
+    ;;
+  performance)
+    exec /usr/local/bin/mechos-performance-center
+    ;;
+  *)
+    echo "Usage: mechos-session-select {gaming|creator|desktop|performance|menu}" >&2
+    exit 2
+    ;;
+esac
+EOF
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-gpu-setup << "EOF"
+#!/usr/bin/env bash
+set -euo pipefail
+
+APPLY=0
+[ "${1:-}" = "--apply" ] && APPLY=1
+
+GPU_LINE="$(lspci 2>/dev/null | grep -Ei 'VGA|3D|Display' | head -n 1 || true)"
+VENDOR="unknown"
+PKGS=()
+
+if echo "$GPU_LINE" | grep -qi nvidia; then
+  VENDOR="nvidia"
+  PKGS=(nvidia-open nvidia-utils lib32-nvidia-utils nvidia-prime)
+elif echo "$GPU_LINE" | grep -Eqi 'AMD|ATI'; then
+  VENDOR="amd"
+  PKGS=(mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon libva-mesa-driver)
+elif echo "$GPU_LINE" | grep -qi intel; then
+  VENDOR="intel"
+  PKGS=(mesa lib32-mesa vulkan-intel lib32-vulkan-intel intel-media-driver)
+fi
+
+echo "MechOS GPU setup"
+echo "Detected: ${GPU_LINE:-No GPU line detected}"
+echo "Vendor: $VENDOR"
+
+if [ "${#PKGS[@]}" -gt 0 ]; then
+  echo "Recommended packages: ${PKGS[*]}"
+fi
+
+if [ "$APPLY" -eq 0 ]; then
+  exit 0
+fi
+
+if [ -e /run/archiso/bootmnt ] || grep -q 'archiso' /proc/cmdline 2>/dev/null; then
+  echo "Live ISO detected. Drivers are already bundled; not modifying the live system."
+  exit 0
+fi
+
+if [ "$VENDOR" = "unknown" ]; then
+  echo "Unknown GPU vendor; no package changes made." >&2
+  exit 1
+fi
+
+sudo pacman -S --needed --noconfirm "${PKGS[@]}"
+echo "GPU packages updated for $VENDOR."
+EOF
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-update << "EOF"
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -e /run/archiso/bootmnt ] || grep -q 'archiso' /proc/cmdline 2>/dev/null; then
+  echo "MechOS is running from the live ISO. Updates would not persist."
+  if command -v kdialog >/dev/null 2>&1; then
+    kdialog --title "MechOS Update" --sorry \
+      "This is the live ISO. Install MechOS before using the system updater."
+  fi
+  exit 2
+fi
+
+sudo pacman -Syu
+if command -v flatpak >/dev/null 2>&1; then
+  flatpak update -y || true
+fi
+echo "MechOS update complete."
+EOF
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-creator-setup << "EOF"
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p \
+  "$HOME/MechOS/Projects" \
+  "$HOME/MechOS/Assets" \
+  "$HOME/MechOS/Recordings" \
+  "$HOME/MechOS/Exports"
+
+echo "MechOS Creator workspace prepared."
+
+for tool in blender obs kdenlive krita git ffmpeg; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    printf '[OK] %s\n' "$tool"
+  else
+    printf '[MISSING] %s\n' "$tool"
+  fi
+done
+
+if [ "${1:-}" = "--open" ]; then
+  exec /usr/local/bin/mechos-creator-mode
+fi
+EOF
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-firstboot << "EOF"
+#!/usr/bin/env bash
+set -euo pipefail
+
+MARKER="/var/lib/mechos/firstboot.done"
+
+if [ -e /run/archiso/bootmnt ] || grep -q 'archiso' /proc/cmdline 2>/dev/null; then
+  echo "Live ISO detected; first-boot setup is for installed MechOS."
+  exit 0
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  exec sudo "$0" "$@"
+fi
+
+mkdir -p /var/lib/mechos /var/log
+
+systemctl enable NetworkManager.service 2>/dev/null || true
+systemctl enable bluetooth.service 2>/dev/null || true
+systemctl enable fstrim.timer 2>/dev/null || true
+systemctl enable irqbalance.service 2>/dev/null || true
+systemctl enable power-profiles-daemon.service 2>/dev/null || true
+systemctl enable switcheroo-control.service 2>/dev/null || true
+
+/usr/local/bin/mechos-gpu-setup > /var/log/mechos-gpu-detect.log 2>&1 || true
+touch "$MARKER"
+
+echo "MechOS first-boot setup complete."
+EOF
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-live-welcome << "EOF"
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! { [ -e /run/archiso/bootmnt ] || grep -q 'archiso' /proc/cmdline 2>/dev/null; }; then
+  exit 0
+fi
+
+command -v kdialog >/dev/null 2>&1 || exit 0
+
+CHOICE="$(kdialog --title "Welcome to MechOS" \
+  --menu "MechOS Alpha Live Environment" \
+  install "Install MechOS" \
+  gaming "Open MechScope" \
+  creator "Open Creator Mode" \
+  performance "Open Performance Center" \
+  continue "Continue to Desktop" 2>/dev/null || true)"
+
+case "$CHOICE" in
+  install) exec /usr/local/bin/mechos-install ;;
+  gaming) exec /usr/local/bin/mechos-session-select gaming ;;
+  creator) exec /usr/local/bin/mechos-creator-mode ;;
+  performance) exec /usr/local/bin/mechos-performance-center ;;
+  *) exit 0 ;;
+esac
+EOF
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-install << "EOF"
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v archinstall >/dev/null 2>&1; then
+  echo "archinstall is not available in this image." >&2
+  exit 1
+fi
+
+MSG="MechOS Alpha installer currently uses Archinstall for disk partitioning and base-system installation.
+
+This is still an ALPHA installer path. Back up important files and test on a spare disk or virtual machine first."
+
+if command -v kdialog >/dev/null 2>&1; then
+  kdialog --title "Install MechOS Alpha" --warningcontinuecancel "$MSG" || exit 0
+fi
+
+if [ -t 1 ]; then
+  exec sudo archinstall
+else
+  exec konsole -e sudo archinstall
+fi
+EOF
+
+chmod 755 \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-firstboot \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-install \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-live-welcome \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-session-select \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-gpu-setup \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-update \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-creator-setup
+
+# Live welcome autostart only does anything on an ArchISO boot.
+mkdir -p /workspace/archlive/airootfs/etc/xdg/autostart
+cat > /workspace/archlive/airootfs/etc/xdg/autostart/mechos-live-welcome.desktop << "EOF"
+[Desktop Entry]
+Type=Application
+Name=MechOS Live Welcome
+Exec=/usr/local/bin/mechos-live-welcome
+OnlyShowIn=KDE;
+X-KDE-autostart-after=panel
+Terminal=false
+EOF
+
+# Installed-system first-boot service. The script exits immediately on the live ISO.
+mkdir -p /workspace/archlive/airootfs/etc/systemd/system
+cat > /workspace/archlive/airootfs/etc/systemd/system/mechos-firstboot.service << "EOF"
+[Unit]
+Description=MechOS first-boot configuration
+After=network.target
+ConditionPathExists=!/var/lib/mechos/firstboot.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mechos-firstboot
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
 # ---------- MECHOS PERFORMANCE + RELIABILITY LAYER ----------
@@ -1219,6 +1493,13 @@ file_permissions["/usr/local/bin/mechos-gaming-session"]="0:0:755"
 file_permissions["/usr/local/bin/mechscope"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-return-to-mechscope"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-performance-center"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-firstboot"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-install"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-live-welcome"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-session-select"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-gpu-setup"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-update"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-creator-setup"]="0:0:755"
 file_permissions["/usr/share/mechos/branding/mechos-logo.png"]="0:0:644"
 file_permissions["/etc/sudoers.d/10-mechos-live"]="0:0:440"
 EOF
@@ -1240,6 +1521,16 @@ test -x /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session
 test -x /workspace/archlive/airootfs/usr/local/bin/mechscope
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-performance-center
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-firstboot
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-install
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-live-welcome
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-session-select
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-gpu-setup
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-update
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-setup
+grep -q 'mechos-firstboot' /workspace/archlive/profiledef.sh
+grep -q 'mechos-session-select' /workspace/archlive/profiledef.sh
+grep -q 'mechos-gpu-setup' /workspace/archlive/profiledef.sh
 test -f /workspace/archlive/airootfs/etc/systemd/zram-generator.conf
 test -L /workspace/archlive/airootfs/etc/systemd/system/timers.target.wants/fstrim.timer
 test -L /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/irqbalance.service
