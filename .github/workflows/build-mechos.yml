@@ -80,7 +80,7 @@ jobs:
       - name: Upload MechOS ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MechOS-v0.3.0-InstallOnlyCreator-PayloadFix-x86_64
+          name: MechOS-v0.3.0-RuntimeScopeValidationFix-x86_64
           path: |
             out/**/*.iso
             out/**/*.iso.sha256
