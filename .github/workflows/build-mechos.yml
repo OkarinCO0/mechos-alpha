@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 jobs:
-  build-iso:
+  build:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
 
@@ -15,53 +15,62 @@ jobs:
       - name: Checkout MechOS
         uses: actions/checkout@v4
 
-      - name: Free disk space
-        shell: bash
+      - name: Free runner disk space
         run: |
-          set -eux
-          df -h
           sudo rm -rf /usr/local/lib/android || true
-          sudo rm -rf /usr/share/dotnet || true
           sudo rm -rf /opt/ghc || true
-          sudo rm -rf /usr/local/.ghcup || true
-          sudo rm -rf /opt/hostedtoolcache || true
-          sudo docker system prune -af --volumes || true
-          sudo apt-get clean || true
+          sudo rm -rf /usr/share/dotnet || true
+          docker system prune -af || true
           df -h
 
-      - name: Validate MechOS builder
-        shell: bash
+      - name: Validate current integration
         run: |
-          set -euxo pipefail
-          test -f scripts/build-mechos-archiso.sh
+          set -euo pipefail
+          python3 -m py_compile scripts/patch-mechos-current.py
+          bash -n scripts/mechos-current-integration.sh
           bash -n scripts/build-mechos-archiso.sh
-          chmod +x scripts/build-mechos-archiso.sh
 
-      - name: Build MechOS Arch ISO
-        shell: bash
+      - name: Apply cumulative MechOS integration
         run: |
-          set -euxo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/out"
+          set -euo pipefail
+          python3 scripts/patch-mechos-current.py scripts/build-mechos-archiso.sh
+          bash -n scripts/build-mechos-archiso.sh
+          grep -n 'MECHOS_CURRENT_INTEGRATION_EARLY' scripts/build-mechos-archiso.sh
+          grep -n 'MECHOS_CURRENT_INTEGRATION_LATE' scripts/build-mechos-archiso.sh
+          grep -n 'MECHSCOPE 2.0' scripts/build-mechos-archiso.sh
+          grep -n 'PROJECT MANAGER' scripts/build-mechos-archiso.sh
+          grep -n 'ASSET BROWSER' scripts/build-mechos-archiso.sh
 
-          docker run --rm --privileged             -v /dev:/dev             -v "$GITHUB_WORKSPACE:/workspace"             -w /workspace             archlinux:latest             bash /workspace/scripts/build-mechos-archiso.sh
-
-      - name: Verify ISO
-        shell: bash
+      - name: Build MechOS ISO
         run: |
-          set -euxo pipefail
-          test -f out/MechOS-Arch-Creator-x86_64.iso
-          test -f out/MechOS-Arch-Creator-x86_64.iso.sha256
-          cd out
-          sha256sum -c MechOS-Arch-Creator-x86_64.iso.sha256
-          ls -lh
+          set -euo pipefail
+          docker run --rm --privileged \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            archlinux:latest \
+            bash /workspace/scripts/build-mechos-archiso.sh
 
-      - name: Upload MechOS ISO
+      - name: Verify ISO and checksum
+        run: |
+          set -euo pipefail
+          ISO="$(find out -maxdepth 2 -type f -name '*.iso' -print -quit)"
+          test -n "$ISO"
+          test -s "$ISO"
+          ISO_DIR="$(dirname "$ISO")"
+          ISO_NAME="$(basename "$ISO")"
+          (
+            cd "$ISO_DIR"
+            sha256sum "$ISO_NAME" > "$ISO_NAME.sha256"
+            sha256sum -c "$ISO_NAME.sha256"
+          )
+          ls -lh "$ISO" "$ISO.sha256"
+
+      - name: Upload MechOS ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MechOS-Arch-Creator-x86_64
+          name: MechOS-v0.3.0-Hotfix-x86_64
           path: |
-            out/MechOS-Arch-Creator-x86_64.iso
-            out/MechOS-Arch-Creator-x86_64.iso.sha256
-          compression-level: 0
-          retention-days: 7
+            out/**/*.iso
+            out/**/*.iso.sha256
           if-no-files-found: error
+          compression-level: 0
