@@ -22,6 +22,9 @@ bash /workspace/scripts/mechos-alongside-integration.sh final
 # Add first-run navigation tutorials after MechScope/Creator Mode and the
 # installed-system payload have been generated.
 bash /workspace/scripts/mechos-tutorial-integration.sh final
+# Hard-gate tutorial auto-launch to a completed MechOS post-install. This keeps
+# the Live ISO and incomplete installs from ever triggering first-run guides.
+bash /workspace/scripts/mechos-tutorial-postinstall-guard.sh final
 # Apply boot-to-MechScope performance fixes after the installed rootfs archive
 # exists so FastBoot can patch both the Live image and installed-system payload.
 bash /workspace/scripts/mechos-fastboot-integration.sh final
@@ -41,7 +44,7 @@ def strip_legacy_patch_calls(text: str) -> str:
         r"\n# MECHOS_V0_2_2_REPAIR_EARLY\n.*?bash /workspace/scripts/mechos-v0\.2\.2-runtime-repair\.sh early\n\n",
         r"\n# MECHOS_V0_2_2_REPAIR_LATE\n.*?bash /workspace/scripts/mechos-v0\.2\.2-runtime-repair\.sh final\n\n",
         r"\n# MECHOS_CURRENT_INTEGRATION_EARLY\n.*?bash /workspace/scripts/mechos-current-integration\.sh early\n\n",
-        r"\n# MECHOS_CURRENT_INTEGRATION_LATE\n.*?bash /workspace/scripts/mechos-current-integration\.sh final\n(?:# Add the guided dual-boot/Install Alongside flow.*\n# and post-install payload have both been generated\.\n)?(?:bash /workspace/scripts/mechos-alongside-integration\.sh final\n)?(?:# Add first-run navigation tutorials.*\n# installed-system payload have been generated\.\n)?(?:bash /workspace/scripts/mechos-tutorial-integration\.sh final\n)?(?:# Apply boot-to-MechScope performance fixes.*\n# exists so FastBoot can patch both the Live image and installed-system payload\.\n)?(?:bash /workspace/scripts/mechos-fastboot-integration\.sh final\n)?\n",
+        r"\n# MECHOS_CURRENT_INTEGRATION_LATE\n.*?bash /workspace/scripts/mechos-current-integration\.sh final\n(?:# Add the guided dual-boot/Install Alongside flow.*\n# and post-install payload have both been generated\.\n)?(?:bash /workspace/scripts/mechos-alongside-integration\.sh final\n)?(?:# Add first-run navigation tutorials.*\n# installed-system payload have been generated\.\n)?(?:bash /workspace/scripts/mechos-tutorial-integration\.sh final\n)?(?:# Hard-gate tutorial auto-launch.*\n# the Live ISO and incomplete installs from ever triggering first-run guides\.\n)?(?:bash /workspace/scripts/mechos-tutorial-postinstall-guard\.sh final\n)?(?:# Apply boot-to-MechScope performance fixes.*\n# exists so FastBoot can patch both the Live image and installed-system payload\.\n)?(?:bash /workspace/scripts/mechos-fastboot-integration\.sh final\n)?\n",
     ]
     for pattern in patterns:
         text = re.sub(pattern, "\n", text, flags=re.S)
