@@ -5695,7 +5695,6 @@ for f in \
   /usr/local/bin/mechos-quick-actions \
   /usr/local/bin/mechos-stream-control \
   /usr/local/bin/mechos-stream-center \
-  /usr/local/bin/mechos-stream-optimize \
   /usr/local/bin/mechos-quick-actions-daemon \
   /usr/local/bin/mechos-creator-mode \
   /usr/local/bin/mechos-creator-app \
@@ -5713,6 +5712,7 @@ for f in \
   /usr/local/bin/mechos-update-helper \
   /usr/local/bin/mechos-update-center \
   /usr/share/applications/mechos-update-center.desktop \
+  /usr/share/applications/mechos-creator-mode.desktop \
   /usr/share/applications/mechos-postinstall.desktop \
   /usr/local/bin/mechos-creator-setup \
   /usr/local/bin/mechos-firstboot \
@@ -5767,7 +5767,6 @@ file_permissions["/usr/local/bin/mechscope"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-quick-actions"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-stream-control"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-stream-center"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-stream-optimize"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-quick-actions-daemon"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-return-to-mechscope"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-performance-center"]="0:0:755"
@@ -5836,7 +5835,6 @@ test -x /workspace/archlive/airootfs/usr/local/bin/mechscope
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
 grep -q "StartStream" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
 grep -q "StopStream" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
 grep -q "MECHOS STREAM CENTER" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
