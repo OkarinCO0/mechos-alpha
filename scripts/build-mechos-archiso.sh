@@ -7,6 +7,13 @@ pacman -S --noconfirm archiso git rsync sed grep coreutils findutils zstd python
 rm -rf /workspace/archlive /workspace/work
 cp -a /usr/share/archiso/configs/releng /workspace/archlive
 
+# The rolling releng profile can temporarily reference packages that have
+# already left the synchronized repositories. broadcom-wl was removed from the
+# repositories but remained in the profile used by the build container, which
+# makes pacstrap abort before the MechOS packages are installed. The kernel's
+# in-tree Broadcom drivers remain available through linux and linux-firmware.
+sed -i '/^broadcom-wl$/d' /workspace/archlive/packages.x86_64
+
 # Steam and Windows-game support need multilib.
 sed -i "/^\#\[multilib\]/,/^\#Include = \/etc\/pacman.d\/mirrorlist/ s/^\#//" \
   /workspace/archlive/pacman.conf

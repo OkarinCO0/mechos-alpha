@@ -83,6 +83,7 @@ grep -q 'MECHOS_CURRENT_INTEGRATION_EARLY' "$BASE/scripts/build-mechos-archiso.s
 grep -q 'MECHOS_CURRENT_INTEGRATION_LATE' "$BASE/scripts/build-mechos-archiso.sh" || fail "late cumulative integration marker is missing"
 grep -q 'mkarchiso' "$BASE/scripts/build-mechos-archiso.sh" || fail "ArchISO build command is missing"
 grep -q 'archinstall' "$BASE/scripts/build-mechos-archiso.sh" || fail "Archinstall integration is missing"
+grep -q "'/\^broadcom-wl\$/d'" "$BASE/scripts/build-mechos-archiso.sh" || fail "stale releng broadcom-wl package is not filtered"
 grep -q '/run/archiso/bootmnt' "$ROOT/usr/local/lib/mechos/runtime.sh" || fail "ArchISO live detection is missing"
 grep -qx 'MECHOS_BASE=Arch-Linux' "$ROOT/etc/mechos/mechos.conf" || fail "MechOS base metadata is not Arch Linux"
 
