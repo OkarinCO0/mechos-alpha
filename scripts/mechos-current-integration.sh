@@ -897,6 +897,11 @@ CORE_RUNTIME=(
   mechos-update-center
   mechos-gpu-setup
   mechos-firstboot
+  mechos-quick-actions
+  mechos-quick-actions-daemon
+  mechos-stream-control
+  mechos-stream-center
+  mechos-stream-optimize
 )
 
 if [ "$PHASE" = "final" ]; then
@@ -1061,6 +1066,11 @@ required_installed=(
   /usr/local/bin/mechos-update-center
   /usr/local/bin/mechos-gpu-setup
   /usr/local/bin/mechos-firstboot
+  /usr/local/bin/mechos-quick-actions
+  /usr/local/bin/mechos-quick-actions-daemon
+  /usr/local/bin/mechos-stream-control
+  /usr/local/bin/mechos-stream-center
+  /usr/local/bin/mechos-stream-optimize
 )
 
 for path in "${required_installed[@]}"; do
@@ -1134,6 +1144,9 @@ DESKTOP_LOG="/var/log/mechos-desktop-install.log"
 touch /var/lib/mechos/desktop-installed
 printf '%s\n' "0.3.0" > /var/lib/mechos/runtime-baseline
 echo "[MechOS] Cumulative installed-system verification passed."
+if [ -n "${SUCCESS_TOKEN:-}" ]; then
+  curl -sS "http://127.0.0.1:45811/${SUCCESS_TOKEN}" >/dev/null 2>&1 || true
+fi
 POSTEOF
 
     chmod 755 "$PAYLOAD/mechos-postinstall-target"

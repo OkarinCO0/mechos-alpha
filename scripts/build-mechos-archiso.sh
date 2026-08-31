@@ -88,6 +88,9 @@ clang
 python
 python-pip
 python-pygame
+python-evdev
+python-websocket-client
+brightnessctl
 python-pyqt6
 ffmpeg
 blender
@@ -418,7 +421,7 @@ class Creator(QMainWindow):
         self.setWindowTitle("MechOS Creator Mode 2.0")
         self.resize(1580,960); self.setMinimumSize(1180,720); self.setStyleSheet(STYLE)
         self.build()
-        self.timer=QTimer(self); self.timer.timeout.connect(self.metrics); self.timer.start(2500); self.metrics()
+        self.timer=QTimer(self); self.timer.timeout.connect(self.metrics); self.timer.start(5000); self.metrics()
 
     def panel(self,name="panel"):
         p=QFrame(); p.setObjectName(name); return p
@@ -681,6 +684,16 @@ class Creator(QMainWindow):
         QMessageBox.information(self,"MechClip AI","MechClip is not installed in a known path yet.")
 
     def metrics(self):
+        try:
+            import json as _json
+            _m = Path.home()/".local/state/mechos/stream-mode.json"
+            if _m.exists() and _json.loads(_m.read_text()).get("mode") == "low-impact":
+                self.timer.setInterval(7000)
+            else:
+                self.timer.setInterval(2500)
+        except Exception:
+            pass
+
         self.cpu.setText("CPU "+(out(["bash","-lc","top -bn1 | awk '/Cpu\\(s\\)/ {printf \"%.0f%%\",100-$8;exit}'"]) or "?"))
         self.ram.setText("RAM "+(out(["bash","-lc","free | awk '/Mem:/ {printf \"%.0f%%\",($3/$2)*100}'"]) or "?"))
         self.vram.setText("VRAM "+vram_text())
@@ -1916,6 +1929,57 @@ fi
 # Apply the cumulative MechOS runtime/installer integration.
 bash /workspace/scripts/mechos-current-integration.sh early
 
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-installer-doctor << "EOF"
+#!/usr/bin/env bash
+set +e
+
+echo
+echo "================ MECHOS INSTALLER DOCTOR ================"
+echo "Date: $(date -Is 2>/dev/null || date)"
+echo
+
+echo "--- Network ---"
+nmcli device status 2>/dev/null || true
+curl -fsSI --connect-timeout 5 --max-time 10 \
+  https://geo.mirror.pkgbuild.com/core/os/x86_64/core.db >/dev/null 2>&1 \
+  && echo "Arch mirror: reachable" || echo "Arch mirror: NOT reachable"
+echo
+
+echo "--- Disks ---"
+lsblk -o NAME,SIZE,TYPE,FSTYPE,FSVER,LABEL,MOUNTPOINTS,MODEL 2>/dev/null || true
+echo
+
+echo "--- MechOS installer log ---"
+tail -n 180 /var/log/mechos-installer.log 2>/dev/null || true
+echo
+
+echo "--- Archinstall log ---"
+tail -n 220 /var/log/archinstall/install.log 2>/dev/null || true
+echo
+
+echo "--- Local payload server log ---"
+tail -n 120 /tmp/mechos-installer-http.log 2>/dev/null || true
+echo
+
+echo "--- Mounted target check ---"
+if mountpoint -q /mnt 2>/dev/null; then
+  echo "/mnt is mounted."
+  test -f /mnt/var/log/mechos-postinstall.log && {
+    echo
+    echo "--- Target MechOS postinstall log ---"
+    tail -n 220 /mnt/var/log/mechos-postinstall.log
+  }
+  test -f /mnt/var/lib/mechos/installed \
+    && echo "MechOS installed marker: present" \
+    || echo "MechOS installed marker: missing"
+else
+  echo "/mnt is not currently mounted."
+fi
+
+echo "=========================================================="
+EOF
+chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-installer-doctor
+
 cat > /workspace/archlive/airootfs/usr/local/bin/mechos-install << "EOF"
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1925,38 +1989,82 @@ CONFIG="$PAYLOAD_DIR/archinstall-mechos.json"
 PORT=45811
 LOG="/var/log/mechos-installer.log"
 HWLOG="/var/log/mechos-installer-hardware.log"
+HTTPLOG="/tmp/mechos-installer-http.log"
 PRESERVE_HOME=0
-[[ " $* " == *" --preserve-home "* ]] && PRESERVE_HOME=1
+SELECTED_DISK=""
+SUCCESS_TOKEN="mechos-install-success-$(date +%s)-$$"
 
-if [ "${1:-}" != "--terminal" ] && [ ! -t 1 ]; then
-  exec konsole -e bash -lc \
-    'sudo /usr/local/bin/mechos-install --terminal; rc=$?; echo; echo "Installer exit code: $rc"; read -rp "Press Enter to close..."'
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --terminal) shift ;;
+    --preserve-home) PRESERVE_HOME=1; shift ;;
+    --selected-disk)
+      [ "$#" -ge 2 ] || { echo "--selected-disk requires a device path" >&2; exit 2; }
+      SELECTED_DISK="$2"
+      shift 2
+      ;;
+    *) echo "Unknown installer argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [ ! -t 1 ]; then
+  args=(--terminal)
+  [ "$PRESERVE_HOME" -eq 1 ] && args+=(--preserve-home)
+  [ -n "$SELECTED_DISK" ] && args+=(--selected-disk "$SELECTED_DISK")
+  exec konsole -e sudo /usr/local/bin/mechos-install "${args[@]}"
 fi
 
 if [ "$(id -u)" -ne 0 ]; then
-  exec sudo "$0" "$@"
+  args=(--terminal)
+  [ "$PRESERVE_HOME" -eq 1 ] && args+=(--preserve-home)
+  [ -n "$SELECTED_DISK" ] && args+=(--selected-disk "$SELECTED_DISK")
+  exec sudo "$0" "${args[@]}"
 fi
 
 mkdir -p /var/log
 : > "$LOG"
+: > "$HTTPLOG"
 exec > >(tee -a "$LOG") 2>&1
+
+echo "============================================================"
+echo "MECHOS INSTALLER BACKEND"
+echo "Started: $(date -Is)"
+echo "============================================================"
+
+if [ -n "$SELECTED_DISK" ]; then
+  if [ ! -b "$SELECTED_DISK" ]; then
+    echo "ERROR: Selected install device does not exist: $SELECTED_DISK" >&2
+    exit 20
+  fi
+  echo "Graphical installer target: $SELECTED_DISK"
+  echo "Archinstall will still show its final disk layout for confirmation."
+fi
+
 /usr/local/bin/mechos-hardware-scan "$HWLOG" || true
 echo "Hardware scan saved to $HWLOG"
 
-if ! command -v archinstall >/dev/null 2>&1; then
-  echo "archinstall is not available in this image." >&2
-  exit 1
-fi
+command -v archinstall >/dev/null 2>&1 || { echo "ERROR: archinstall missing." >&2; exit 21; }
+command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 missing." >&2; exit 22; }
+command -v curl >/dev/null 2>&1 || { echo "ERROR: curl missing." >&2; exit 23; }
 
 for f in \
   "$PAYLOAD_DIR/mechos-rootfs.tar.zst" \
   "$PAYLOAD_DIR/mechos-postinstall-target" \
   "$CONFIG"; do
-  if [ ! -f "$f" ]; then
-    echo "Missing MechOS installer payload: $f" >&2
-    exit 1
-  fi
+  [ -s "$f" ] || { echo "ERROR: Missing/empty installer payload: $f" >&2; exit 24; }
 done
+
+python3 -m json.tool "$CONFIG" >/dev/null
+
+echo
+echo "Checking Arch package network access..."
+if ! curl -fsSI --connect-timeout 8 --max-time 15 \
+  https://geo.mirror.pkgbuild.com/core/os/x86_64/core.db >/dev/null 2>&1; then
+  echo "ERROR: No working Arch package-network connection." >&2
+  echo "Connect the Live desktop to the internet and retry." >&2
+  exit 25
+fi
+echo "Network preflight: PASS"
 
 cat <<'WARN'
 
@@ -1964,44 +2072,40 @@ cat <<'WARN'
                    MECHOS ALPHA INSTALLER
 ============================================================
 
-Archinstall will handle disk selection, formatting, users,
-bootloader and base Arch installation.
+Archinstall handles disk layout, filesystem, user/password,
+bootloader, and the final destructive confirmation.
 
-After Archinstall finishes its base install, MechOS will
-automatically deploy:
-  - MechScope Gaming Mode
-  - Creator Mode
-  - Desktop Mode integration
-  - Performance Center
-  - GPU setup
-  - MechOS boot graphics / Plymouth
-  - MechOS updater and first-boot services
-
-IMPORTANT:
-  Installing an operating system can erase a selected disk.
-  Read Archinstall's disk summary carefully before confirming.
-  For Alpha testing, use a VM or spare drive first.
+After the base system installs, MechOS deploys its full runtime.
 
 ============================================================
 WARN
 
+if [ -n "$SELECTED_DISK" ]; then
+  echo "Selected in MechOS UI: $SELECTED_DISK"
+  echo "Use this same device on Archinstall's Disk Configuration page."
+  echo
+fi
+
+if [ "$PRESERVE_HOME" -eq 1 ]; then
+  echo "PRESERVE-HOME MODE:"
+  echo "Use manual partitioning and DO NOT format existing /home storage."
+  echo
+fi
+
 if command -v kdialog >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
   kdialog --title "Install MechOS Alpha" --warningcontinuecancel \
-    "MechOS uses Archinstall for disk setup.
+    "The disk/user setup screen will open now.
 
-The selected disk can be erased if you choose a wipe/format option.
+Installing can erase the selected target.
 
-Use a VM or spare drive for Alpha testing and verify the final disk summary before confirming." \
+Review the final disk summary before confirming." \
     || exit 0
 fi
 
-# Archinstall's custom post-install commands execute inside the new system.
-# A tiny loopback-only HTTP server lets that chroot retrieve the MechOS
-# payload from the live ISO without requiring an external download.
 python3 -m http.server "$PORT" \
   --bind 127.0.0.1 \
   --directory "$PAYLOAD_DIR" \
-  >/tmp/mechos-installer-http.log 2>&1 &
+  >"$HTTPLOG" 2>&1 &
 SERVER_PID=$!
 
 cleanup() {
@@ -2010,25 +2114,94 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 sleep 1
-curl -fsS "http://127.0.0.1:${PORT}/mechos-postinstall-target" >/dev/null
+
+for payload in mechos-postinstall-target mechos-rootfs.tar.zst; do
+  curl -fsS "http://127.0.0.1:${PORT}/${payload}" >/dev/null || {
+    echo "ERROR: Local payload server failed for $payload" >&2
+    exit 26
+  }
+done
+echo "Local payload server: PASS"
+
+RUN_CONFIG="/tmp/mechos-archinstall-${SUCCESS_TOKEN}.json"
+python3 - "$CONFIG" "$RUN_CONFIG" "$SUCCESS_TOKEN" <<'PYEOF'
+import json
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+token = sys.argv[3]
+
+data = json.loads(src.read_text())
+commands = list(data.get("custom_commands") or [])
+
+# One command fetches and executes the target post-install script. The token is
+# passed as an argument and used only as a loopback success handshake.
+commands = [
+    f"curl -fsSL http://127.0.0.1:45811/mechos-postinstall-target "
+    f"-o /root/mechos-postinstall-target",
+    "chmod 755 /root/mechos-postinstall-target",
+    f"/root/mechos-postinstall-target {token}",
+]
+data["custom_commands"] = commands
+dst.write_text(json.dumps(data, indent=2) + "\n")
+PYEOF
+
+python3 -m json.tool "$RUN_CONFIG" >/dev/null
 
 echo
-echo "Starting guided Archinstall..."
-echo "MechOS post-install integration is loaded."
-if [ "$PRESERVE_HOME" -eq 1 ]; then
-  echo "PRESERVE-HOME MODE: choose Manual partitioning and do not format /home."
-  echo "Review /tmp/mechos-preserve-home-plan.txt if it was created."
+echo "Starting Archinstall..."
+echo "Installer log: /var/log/archinstall/install.log"
+echo
+
+set +e
+archinstall --config "$RUN_CONFIG"
+ARCH_RC=$?
+set -e
+
+echo
+echo "Archinstall exit code: $ARCH_RC"
+
+if [ "$ARCH_RC" -ne 0 ]; then
+  echo "ERROR: Archinstall failed." >&2
+  /usr/local/bin/mechos-installer-doctor || true
+  exit "$ARCH_RC"
 fi
-echo
 
-# Do NOT use --silent. The user still chooses the disk, filesystem,
-# bootloader, username/password and confirms all destructive actions.
-archinstall --config "$CONFIG"
+# Archinstall can return to its menu/exit path without a successful MechOS
+# deployment. Require BOTH Archinstall's success line and our post-install
+# loopback handshake.
+ARCH_OK=0
+if grep -Fq "Installation completed without any errors" /var/log/archinstall/install.log 2>/dev/null; then
+  ARCH_OK=1
+fi
+
+MECHOS_OK=0
+if grep -Fq "/${SUCCESS_TOKEN}" "$HTTPLOG" 2>/dev/null; then
+  MECHOS_OK=1
+fi
+
+if [ "$ARCH_OK" -ne 1 ]; then
+  echo "ERROR: Archinstall did not record a completed installation." >&2
+  /usr/local/bin/mechos-installer-doctor || true
+  exit 27
+fi
+
+if [ "$MECHOS_OK" -ne 1 ]; then
+  echo "ERROR: Base Arch installation completed, but the MechOS deployment did not finish." >&2
+  echo "This usually means the target post-install package/runtime stage failed." >&2
+  /usr/local/bin/mechos-installer-doctor || true
+  exit 28
+fi
 
 echo
-echo "Archinstall exited."
-echo "If installation completed successfully, the MechOS post-install"
-echo "stage should have created /var/lib/mechos/installed in the new system."
+echo "============================================================"
+echo "MECHOS INSTALL COMPLETED"
+echo "Base Arch install: PASS"
+echo "MechOS deployment: PASS"
+echo "You can now reboot into the installed system."
+echo "============================================================"
 EOF
 
 chmod 755 \
@@ -2721,7 +2894,7 @@ class Installer(QMainWindow):
             return
 
         if self.install_mode == "custom":
-            subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-install","--terminal","--preserve-home"])
+            subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-install","--terminal","--preserve-home","--selected-disk",self.selected_disk])
             return
 
         answer = QMessageBox.question(
@@ -2733,7 +2906,7 @@ class Installer(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
 
-        subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-install","--terminal"])
+        subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-install","--terminal","--selected-disk",self.selected_disk])
 
     def recovery(self):
         subprocess.Popen(["/usr/local/bin/mechos-recovery-center"])
@@ -3107,6 +3280,1193 @@ cp /workspace/archlive/airootfs/usr/share/mechos/branding/mechos-logo.png \
 # MechScope is the Gaming Mode shell. It owns the Steam launcher and
 # mode switching so Desktop/Creator switching is part of MechScope,
 # not a separate desktop-only utility.
+
+
+# ---------- MECHOS STREAM CENTER / OBS LOCAL CONTROL ----------
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control << "PYEOF"
+#!/usr/bin/env python3
+import argparse
+import base64
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+import uuid
+from pathlib import Path
+
+try:
+    import websocket
+except Exception as exc:
+    raise SystemExit(f"python-websocket-client is required: {exc}")
+
+CONFIG_DIR = Path.home() / ".config/mechos"
+CONFIG_FILE = CONFIG_DIR / "stream-control.json"
+
+class ObsError(RuntimeError):
+    pass
+
+def load_config():
+    cfg = {"host":"127.0.0.1","port":4455,"password":""}
+    if CONFIG_FILE.exists():
+        try:
+            loaded = json.loads(CONFIG_FILE.read_text())
+            if isinstance(loaded, dict):
+                cfg.update(loaded)
+        except Exception:
+            pass
+    return cfg
+
+def save_config(host="127.0.0.1", port=4455, password=""):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps({
+        "host": host,
+        "port": int(port),
+        "password": password,
+    }, indent=2) + "\n")
+    os.chmod(CONFIG_FILE, 0o600)
+
+def obs_running():
+    return subprocess.run(
+        ["pgrep","-x","obs"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ).returncode == 0
+
+def launch_obs():
+    if obs_running():
+        return
+    subprocess.Popen(
+        ["obs","--minimize-to-tray"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+def make_auth(password, salt, challenge):
+    secret = base64.b64encode(
+        hashlib.sha256((password + salt).encode("utf-8")).digest()
+    ).decode("ascii")
+    return base64.b64encode(
+        hashlib.sha256((secret + challenge).encode("utf-8")).digest()
+    ).decode("ascii")
+
+class ObsClient:
+    def __init__(self, auto_launch=False, timeout=4.0):
+        self.cfg = load_config()
+        if auto_launch:
+            launch_obs()
+        self.ws = None
+        deadline = time.monotonic() + (12.0 if auto_launch else timeout)
+        last = None
+        while time.monotonic() < deadline:
+            try:
+                self.ws = websocket.create_connection(
+                    f"ws://{self.cfg['host']}:{int(self.cfg['port'])}",
+                    timeout=3,
+                    subprotocols=["obswebsocket.json"],
+                )
+                break
+            except Exception as exc:
+                last = exc
+                if not auto_launch:
+                    break
+                time.sleep(0.5)
+        if self.ws is None:
+            raise ObsError(f"Could not connect to OBS WebSocket: {last}")
+        self.identify()
+
+    def recv_json(self):
+        raw = self.ws.recv()
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "replace")
+        return json.loads(raw)
+
+    def send_json(self, obj):
+        self.ws.send(json.dumps(obj))
+
+    def identify(self):
+        hello = self.recv_json()
+        if hello.get("op") != 0:
+            raise ObsError("OBS WebSocket did not send Hello.")
+        data = hello.get("d", {})
+        identify = {"rpcVersion":1,"eventSubscriptions":0}
+        auth = data.get("authentication")
+        if auth:
+            password = str(self.cfg.get("password",""))
+            if not password:
+                raise ObsError(
+                    "OBS WebSocket authentication is enabled, but MechOS has no "
+                    "local control password saved yet."
+                )
+            identify["authentication"] = make_auth(
+                password,
+                str(auth.get("salt","")),
+                str(auth.get("challenge","")),
+            )
+        self.send_json({"op":1,"d":identify})
+        identified = self.recv_json()
+        if identified.get("op") != 2:
+            raise ObsError("OBS WebSocket authentication/identification failed.")
+
+    def request(self, request_type, data=None):
+        rid = str(uuid.uuid4())
+        payload = {
+            "requestType": request_type,
+            "requestId": rid,
+        }
+        if data:
+            payload["requestData"] = data
+        self.send_json({"op":6,"d":payload})
+
+        while True:
+            msg = self.recv_json()
+            if msg.get("op") != 7:
+                continue
+            d = msg.get("d", {})
+            if d.get("requestId") != rid:
+                continue
+            status = d.get("requestStatus", {})
+            if not status.get("result", False):
+                comment = status.get("comment") or "OBS request failed."
+                code = status.get("code")
+                raise ObsError(f"{comment} (code {code})")
+            return d.get("responseData", {})
+
+    def close(self):
+        try:
+            self.ws.close()
+        except Exception:
+            pass
+
+def get_status(client):
+    stream = client.request("GetStreamStatus")
+    record = client.request("GetRecordStatus")
+    scenes = client.request("GetSceneList")
+    return {
+        "streaming": bool(stream.get("outputActive")),
+        "streamTimecode": stream.get("outputTimecode","00:00:00"),
+        "streamCongestion": stream.get("outputCongestion",0),
+        "recording": bool(record.get("outputActive")),
+        "recordTimecode": record.get("outputTimecode","00:00:00"),
+        "scene": scenes.get("currentProgramSceneName",""),
+        "scenes": [x.get("sceneName","") for x in scenes.get("scenes",[])],
+    }
+
+def main():
+    p = argparse.ArgumentParser()
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    cfg = sub.add_parser("configure")
+    cfg.add_argument("--host", default="127.0.0.1")
+    cfg.add_argument("--port", type=int, default=4455)
+    cfg.add_argument("--password", default="")
+
+    for name in (
+        "status","start-stream","stop-stream","toggle-stream",
+        "start-record","stop-record","toggle-record","launch-obs",
+        "list-scenes",
+    ):
+        sub.add_parser(name)
+
+    scene = sub.add_parser("set-scene")
+    scene.add_argument("name")
+
+    args = p.parse_args()
+
+    if args.cmd == "configure":
+        save_config(args.host, args.port, args.password)
+        print("saved")
+        return
+
+    if args.cmd == "launch-obs":
+        launch_obs()
+        print("launched")
+        return
+
+    client = ObsClient(auto_launch=args.cmd in ("start-stream","start-record"))
+    try:
+        if args.cmd == "status":
+            print(json.dumps(get_status(client)))
+        elif args.cmd == "start-stream":
+            client.request("StartStream")
+            print("streaming")
+        elif args.cmd == "stop-stream":
+            client.request("StopStream")
+            print("stopped")
+        elif args.cmd == "toggle-stream":
+            client.request("ToggleStream")
+            print(json.dumps(get_status(client)))
+        elif args.cmd == "start-record":
+            client.request("StartRecord")
+            print("recording")
+        elif args.cmd == "stop-record":
+            client.request("StopRecord")
+            print("stopped")
+        elif args.cmd == "toggle-record":
+            client.request("ToggleRecord")
+            print(json.dumps(get_status(client)))
+        elif args.cmd == "list-scenes":
+            print(json.dumps(get_status(client)["scenes"]))
+        elif args.cmd == "set-scene":
+            client.request("SetCurrentProgramScene", {"sceneName":args.name})
+            print(args.name)
+    finally:
+        client.close()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except ObsError as exc:
+        print(f"MECHOS_STREAM_ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(3)
+PYEOF
+chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
+
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize << "PYEOF"
+#!/usr/bin/env python3
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+STATE = Path.home()/".local/state/mechos/stream-mode.json"
+CONFIG = Path.home()/".config/mechos/stream-optimizer.json"
+
+def run(cmd):
+    try:
+        return subprocess.run(cmd, text=True, capture_output=True, check=False)
+    except Exception:
+        return None
+
+def out(cmd):
+    p=run(cmd)
+    return ((p.stdout or "") if p else "").strip()
+
+def gpu_vendor():
+    s=out(["bash","-lc","lspci | grep -Ei 'VGA|3D|Display' | head -n1"]).lower()
+    if "nvidia" in s:
+        return "nvidia"
+    if "amd" in s or "ati" in s:
+        return "amd"
+    if "intel" in s:
+        return "intel"
+    return "unknown"
+
+def encoder_advice():
+    vendor=gpu_vendor()
+    ffmpeg=out(["bash","-lc","ffmpeg -hide_banner -encoders 2>/dev/null || true"]).lower()
+    options=[]
+
+    if vendor=="nvidia" and ("nvenc" in ffmpeg or Path("/dev/nvidia0").exists()):
+        options.append("NVIDIA hardware encoder detected: prefer NVENC in OBS.")
+    if vendor=="amd":
+        if Path("/dev/dri/renderD128").exists() or "vaapi" in ffmpeg:
+            options.append("AMD render device detected: prefer a supported VAAPI/AMD hardware encoder in OBS.")
+    if vendor=="intel":
+        if Path("/dev/dri/renderD128").exists() or "qsv" in ffmpeg or "vaapi" in ffmpeg:
+            options.append("Intel render device detected: prefer QSV/VAAPI hardware encoding in OBS.")
+    if not options:
+        options.append("No hardware encoder was confirmed automatically. Use OBS Auto-Configuration Wizard before streaming.")
+
+    return {
+        "vendor":vendor,
+        "advice":options,
+        "lowImpactPreset":{
+            "resolution":"1280x720",
+            "fps":60,
+            "bitrateGuide":"4500-6000 Kbps",
+            "encoder":"hardware encoder when available",
+            "notes":[
+                "Prefer a fast/speed-oriented hardware preset.",
+                "Avoid GPU-expensive look-ahead when gaming performance is the priority.",
+                "Keep OBS minimized while live.",
+                "Use a 2-second keyframe interval when required by your streaming service."
+            ]
+        },
+        "balancedPreset":{
+            "resolution":"1920x1080",
+            "fps":60,
+            "bitrateGuide":"6000+ Kbps where your service and connection support it",
+            "encoder":"hardware encoder when available",
+            "notes":[
+                "Use only if game GPU headroom remains comfortable.",
+                "Drop to 720p60 first if the game starts losing frames."
+            ]
+        }
+    }
+
+def save_mode(mode):
+    STATE.parent.mkdir(parents=True,exist_ok=True)
+    STATE.write_text(json.dumps({"mode":mode},indent=2)+"\n")
+
+def enable():
+    # Hardware streaming performs best when the OS is not in a power-saving mode.
+    if shutil.which("powerprofilesctl"):
+        run(["powerprofilesctl","set","performance"])
+
+    # Keep OBS GUI out of the way. This does not kill preview/rendering, but avoids
+    # leaving a large desktop UI over the game session.
+    if shutil.which("wmctrl"):
+        run(["bash","-lc","wmctrl -r 'OBS' -b add,hidden 2>/dev/null || true"])
+
+    # Tell MechOS UIs to reduce noncritical refreshes while streaming.
+    save_mode("low-impact")
+    print("low-impact")
+
+def disable():
+    save_mode("normal")
+    if shutil.which("powerprofilesctl"):
+        run(["powerprofilesctl","set","balanced"])
+    print("normal")
+
+def status():
+    mode="normal"
+    try:
+        mode=json.loads(STATE.read_text()).get("mode","normal")
+    except Exception:
+        pass
+    print(json.dumps({"mode":mode, **encoder_advice()}))
+
+if __name__=="__main__":
+    cmd=sys.argv[1] if len(sys.argv)>1 else "status"
+    if cmd=="enable": enable()
+    elif cmd=="disable": disable()
+    elif cmd=="status": status()
+    elif cmd=="advice": print(json.dumps(encoder_advice()))
+    else: raise SystemExit("Usage: mechos-stream-optimize {enable|disable|status|advice}")
+PYEOF
+chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center << "PYEOF"
+#!/usr/bin/env python3
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from PyQt6.QtCore import QTimer
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QApplication, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QInputDialog, QLineEdit, QMainWindow, QMessageBox, QPushButton,
+    QSpinBox, QVBoxLayout, QWidget
+)
+
+CONTROL="/usr/local/bin/mechos-stream-control"
+CONFIG=Path.home()/".config/mechos/stream-control.json"
+
+STYLE="""
+QWidget{background:#070b14;color:#f4f8ff;font-family:Sans Serif}
+QFrame#panel{background:#0d1524;border:1px solid #294b70;border-radius:12px}
+QLabel#title{font-size:24px;font-weight:900;color:#c16cff}
+QLabel#section{font-size:13px;font-weight:800;color:#67caff}
+QLabel#muted{color:#94a2ba}
+QLabel#live{font-size:18px;font-weight:900;color:#ff5b75}
+QLabel#offline{font-size:18px;font-weight:900;color:#8fa0b8}
+QPushButton{
+ background:#122039;border:1px solid #31577e;border-radius:8px;
+ padding:10px 13px;color:#f4f8ff;font-weight:700
+}
+QPushButton:hover{background:#293166;border:1px solid #8b69ff}
+QPushButton#live{background:#7b1835;border:1px solid #ff587c}
+QPushButton#stop{background:#351321;border:1px solid #b84362}
+QComboBox,QSpinBox{
+ background:#0b1320;border:1px solid #31577e;border-radius:7px;padding:7px
+}
+"""
+
+def call(args):
+    return subprocess.run(
+        [CONTROL]+args,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+
+def spawn(args):
+    try: subprocess.Popen(args)
+    except Exception: pass
+
+class StreamCenter(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("MechOS Stream Center")
+        self.resize(720,640)
+        self.setStyleSheet(STYLE)
+        self.build()
+        self.timer=QTimer(self)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start(2500)
+        self.refresh()
+
+    def panel(self):
+        p=QFrame(); p.setObjectName("panel"); return p
+
+    def btn(self,text,fn,obj=""):
+        b=QPushButton(text)
+        if obj:b.setObjectName(obj)
+        b.clicked.connect(fn)
+        return b
+
+    def build(self):
+        root=QWidget(); self.setCentralWidget(root)
+        v=QVBoxLayout(root); v.setContentsMargins(18,18,18,18); v.setSpacing(12)
+
+        t=QLabel("MECHOS STREAM CENTER"); t.setObjectName("title"); v.addWidget(t)
+        s=QLabel("Stream and record from MechScope through OBS Studio.")
+        s.setObjectName("muted"); v.addWidget(s)
+
+        optimize=self.panel(); opl=QVBoxLayout(optimize)
+        oph=QLabel("LIGHTWEIGHT STREAMING"); oph.setObjectName("section"); opl.addWidget(oph)
+        self.optimize_status=QLabel("Checking encoder / stream mode…")
+        self.optimize_status.setObjectName("muted")
+        self.optimize_status.setWordWrap(True)
+        opl.addWidget(self.optimize_status)
+        opr=QHBoxLayout()
+        opr.addWidget(self.btn("Enable Low Impact Mode",self.enable_low_impact))
+        opr.addWidget(self.btn("Return to Normal",self.disable_low_impact))
+        opl.addLayout(opr)
+        advice=self.btn("Show Hardware Encoder Advice",self.encoder_advice)
+        opl.addWidget(advice)
+        v.addWidget(optimize)
+
+        status=self.panel(); sl=QVBoxLayout(status)
+        sh=QLabel("STREAM STATUS"); sh.setObjectName("section"); sl.addWidget(sh)
+        self.live=QLabel("Checking OBS…"); self.live.setObjectName("offline"); sl.addWidget(self.live)
+        self.detail=QLabel(); self.detail.setObjectName("muted"); self.detail.setWordWrap(True); sl.addWidget(self.detail)
+        v.addWidget(status)
+
+        actions=self.panel(); al=QVBoxLayout(actions)
+        ah=QLabel("LIVE CONTROL"); ah.setObjectName("section"); al.addWidget(ah)
+        g=QGridLayout()
+        g.addWidget(self.btn("Go Live",self.start_stream,"live"),0,0)
+        g.addWidget(self.btn("End Stream",self.stop_stream,"stop"),0,1)
+        g.addWidget(self.btn("Start Recording",self.start_record),1,0)
+        g.addWidget(self.btn("Stop Recording",self.stop_record),1,1)
+        g.addWidget(self.btn("Open OBS",self.open_obs),2,0)
+        g.addWidget(self.btn("Refresh Status",self.refresh),2,1)
+        al.addLayout(g)
+        v.addWidget(actions)
+
+        scenes=self.panel(); scl=QVBoxLayout(scenes)
+        sch=QLabel("SCENES"); sch.setObjectName("section"); scl.addWidget(sch)
+        row=QHBoxLayout()
+        self.scenes=QComboBox(); row.addWidget(self.scenes,1)
+        row.addWidget(self.btn("Switch Scene",self.set_scene))
+        scl.addLayout(row)
+        v.addWidget(scenes)
+
+        setup=self.panel(); spl=QVBoxLayout(setup)
+        sph=QLabel("ONE-TIME OBS SETUP"); sph.setObjectName("section"); spl.addWidget(sph)
+        note=QLabel(
+          "Configure your Twitch/YouTube/etc. account in OBS → Settings → Stream. "
+          "Then enable OBS WebSocket under Tools → WebSocket Server Settings. "
+          "MechOS stores only the local OBS control password; your stream key/account "
+          "remain inside OBS."
+        )
+        note.setObjectName("muted"); note.setWordWrap(True); spl.addWidget(note)
+
+        self.port=QSpinBox(); self.port.setRange(1,65535); self.port.setValue(4455)
+        row=QHBoxLayout(); row.addWidget(QLabel("WebSocket port")); row.addWidget(self.port)
+        row.addWidget(self.btn("Save Control Password",self.save_password))
+        spl.addLayout(row)
+        spl.addWidget(self.btn("Open OBS for Account / Scene Setup",self.open_obs))
+        v.addWidget(setup)
+
+        hot=self.panel(); hl=QVBoxLayout(hot)
+        hh=QLabel("STREAMING HOTKEYS"); hh.setObjectName("section"); hl.addWidget(hh)
+        info=QLabel(
+          "Ctrl+Shift+B  Stream Center\n"
+          "Ctrl+Shift+L  Go Live\n"
+          "Ctrl+Shift+K  End Stream\n"
+          "Ctrl+Shift+R  Toggle Recording\n"
+          "Guide/Home + Y  Quick Actions"
+        )
+        info.setObjectName("muted"); hl.addWidget(info)
+        v.addWidget(hot)
+        v.addStretch()
+
+    def optimize_call(self,args):
+        return subprocess.run(
+            ["/usr/local/bin/mechos-stream-optimize"]+args,
+            text=True,capture_output=True,timeout=10,check=False
+        )
+
+    def enable_low_impact(self):
+        p=self.optimize_call(["enable"])
+        if p.returncode:
+            self.show_error("Could not enable Low Impact mode",p)
+        self.refresh_optimizer()
+
+    def disable_low_impact(self):
+        p=self.optimize_call(["disable"])
+        if p.returncode:
+            self.show_error("Could not disable Low Impact mode",p)
+        self.refresh_optimizer()
+
+    def encoder_advice(self):
+        p=self.optimize_call(["advice"])
+        if p.returncode:
+            self.show_error("Encoder detection failed",p)
+            return
+        try:
+            data=json.loads(p.stdout)
+            advice="\n".join("• "+x for x in data.get("advice",[]))
+            low=data.get("lowImpactPreset",{})
+            msg=(
+              advice+"\n\nRecommended Low Impact target:\n"
+              f"{low.get('resolution','1280x720')} @ {low.get('fps',60)} FPS\n"
+              f"{low.get('bitrateGuide','')}\n"
+              f"{low.get('encoder','')}"
+            )
+        except Exception:
+            msg=p.stdout
+        QMessageBox.information(self,"MechOS Streaming Encoder Advice",msg)
+
+    def refresh_optimizer(self):
+        p=self.optimize_call(["status"])
+        if p.returncode:
+            self.optimize_status.setText("Low Impact mode status unavailable.")
+            return
+        try:
+            d=json.loads(p.stdout)
+            advice=" ".join(d.get("advice",[]))
+            self.optimize_status.setText(
+              f"Mode: {d.get('mode','normal')}\n{advice}"
+            )
+        except Exception:
+            pass
+
+    def show_error(self,prefix,p):
+        msg=(p.stderr or p.stdout or "Unknown OBS control error").strip()
+        QMessageBox.warning(self,prefix,msg)
+
+    def start_stream(self):
+        self.optimize_call(["enable"])
+        p=call(["start-stream"])
+        if p.returncode:
+            self.show_error("Could not start stream",p)
+        self.refresh()
+
+    def stop_stream(self):
+        p=call(["stop-stream"])
+        self.optimize_call(["disable"])
+        if p.returncode:
+            self.show_error("Could not stop stream",p)
+        self.refresh()
+
+    def start_record(self):
+        p=call(["start-record"])
+        if p.returncode:self.show_error("Could not start recording",p)
+        self.refresh()
+
+    def stop_record(self):
+        p=call(["stop-record"])
+        if p.returncode:self.show_error("Could not stop recording",p)
+        self.refresh()
+
+    def open_obs(self):
+        call(["launch-obs"])
+
+    def save_password(self):
+        password,ok=QInputDialog.getText(
+            self,"OBS WebSocket Password",
+            "Enter the password shown in OBS → Tools → WebSocket Server Settings:",
+            QLineEdit.EchoMode.Password
+        )
+        if not ok:return
+        p=call(["configure","--port",str(self.port.value()),"--password",password])
+        if p.returncode:
+            self.show_error("Could not save OBS control settings",p)
+        else:
+            QMessageBox.information(
+              self,"MechOS Stream Center",
+              "Local OBS control settings saved with user-only file permissions."
+            )
+            self.refresh()
+
+    def set_scene(self):
+        name=self.scenes.currentText()
+        if not name:return
+        p=call(["set-scene",name])
+        if p.returncode:self.show_error("Could not switch scene",p)
+        self.refresh()
+
+    def refresh(self):
+        self.refresh_optimizer()
+        p=call(["status"])
+        if p.returncode:
+            self.live.setText("OBS CONTROL OFFLINE")
+            self.live.setObjectName("offline")
+            self.live.style().unpolish(self.live); self.live.style().polish(self.live)
+            self.detail.setText(
+              "Open OBS and complete the one-time Stream Center setup. "
+              "Streaming accounts and stream keys stay in OBS."
+            )
+            return
+        try:
+            st=json.loads(p.stdout)
+        except Exception:
+            return
+        if st.get("streaming"):
+            self.live.setText("● LIVE")
+            self.live.setObjectName("live")
+        else:
+            self.live.setText("OFFLINE")
+            self.live.setObjectName("offline")
+        self.live.style().unpolish(self.live); self.live.style().polish(self.live)
+
+        rec="Recording" if st.get("recording") else "Not recording"
+        self.detail.setText(
+          f"Scene: {st.get('scene') or 'Unknown'}\n"
+          f"Stream time: {st.get('streamTimecode','00:00:00')} • {rec}"
+        )
+
+        current=self.scenes.currentText()
+        self.scenes.blockSignals(True)
+        self.scenes.clear()
+        self.scenes.addItems(st.get("scenes",[]))
+        if current:
+            i=self.scenes.findText(current)
+            if i>=0:self.scenes.setCurrentIndex(i)
+        if st.get("scene"):
+            i=self.scenes.findText(st["scene"])
+            if i>=0:self.scenes.setCurrentIndex(i)
+        self.scenes.blockSignals(False)
+
+app=QApplication(sys.argv)
+app.setApplicationName("MechOS Stream Center")
+w=StreamCenter(); w.show(); sys.exit(app.exec())
+PYEOF
+chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
+
+# ---------- MECHSCOPE QUICK ACTIONS + GLOBAL GAMING HOTKEYS ----------
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions << "PYEOF"
+#!/usr/bin/env python3
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont, QKeyEvent
+from PyQt6.QtWidgets import (
+    QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
+    QMessageBox, QPushButton, QVBoxLayout, QWidget
+)
+
+CONFIG = Path.home() / ".config/MangoHud/MangoHud.conf"
+
+STYLE = """
+QWidget { background:#070b15; color:#eef7ff; font-family:Sans Serif; }
+QFrame#panel { background:#0c1424; border:1px solid #29456b; border-radius:13px; }
+QLabel#title { color:#c477ff; font-size:22px; font-weight:900; }
+QLabel#section { color:#72ccff; font-size:13px; font-weight:800; }
+QLabel#muted { color:#91a0b8; }
+QLabel#metric { color:#d0adff; font-weight:700; }
+QPushButton {
+  background:#111e31; border:1px solid #315377; border-radius:8px;
+  padding:10px 12px; color:#eef7ff; font-weight:650;
+}
+QPushButton:hover, QPushButton:focus {
+  background:#26305a; border:2px solid #8665ff;
+}
+QPushButton#profile {
+  background:#24133a; border:1px solid #70429a;
+}
+"""
+
+def run(cmd):
+    try:
+        return subprocess.run(cmd, check=False, text=True, capture_output=True)
+    except Exception:
+        return None
+
+def spawn(cmd):
+    try:
+        subprocess.Popen(cmd)
+    except Exception:
+        pass
+
+def out(cmd):
+    p = run(cmd)
+    if not p:
+        return ""
+    return (p.stdout or "").strip()
+
+def ensure_mangohud_config():
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    if CONFIG.exists():
+        return
+    CONFIG.write_text("""legacy_layout=false
+fps
+frametime
+gpu_stats
+gpu_temp
+vram
+cpu_stats
+cpu_temp
+ram
+wine
+gamemode
+battery
+position=top-left
+background_alpha=0.45
+control=mangohud
+no_display
+fps_limit=0,30,60,120
+toggle_fps_limit=Shift_L+F1
+toggle_hud=Shift_R+F12
+toggle_hud_position=Shift_R+F11
+reload_cfg=Shift_L+F4
+""")
+
+class QuickActions(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        ensure_mangohud_config()
+
+        self.setWindowTitle("MechOS Quick Actions")
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool
+        )
+        self.setStyleSheet(STYLE)
+        self.setFixedWidth(470)
+        self.build()
+
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.setGeometry(screen.right() - self.width() + 1, screen.top(), self.width(), screen.height())
+
+    def panel(self):
+        p = QFrame()
+        p.setObjectName("panel")
+        return p
+
+    def button(self, text, fn, obj=""):
+        b = QPushButton(text)
+        if obj:
+            b.setObjectName(obj)
+        b.clicked.connect(fn)
+        return b
+
+    def build(self):
+        root = QWidget()
+        self.setCentralWidget(root)
+        outer = QVBoxLayout(root)
+        outer.setContentsMargins(14,14,14,14)
+        outer.setSpacing(11)
+
+        title = QLabel("MECHOS QUICK ACTIONS")
+        title.setObjectName("title")
+        outer.addWidget(title)
+        subtitle = QLabel("In-game controls • Ctrl+Shift+M • Guide/Home + Y")
+        subtitle.setObjectName("muted")
+        outer.addWidget(subtitle)
+
+        perf = self.panel()
+        pl = QVBoxLayout(perf)
+        h = QLabel("PERFORMANCE")
+        h.setObjectName("section")
+        pl.addWidget(h)
+
+        profiles = QGridLayout()
+        profiles.addWidget(self.button("Performance", lambda:self.profile("performance"), "profile"),0,0)
+        profiles.addWidget(self.button("Balanced", lambda:self.profile("balanced"), "profile"),0,1)
+        profiles.addWidget(self.button("Battery Saver", lambda:self.profile("power-saver"), "profile"),0,2)
+        pl.addLayout(profiles)
+
+        row = QHBoxLayout()
+        row.addWidget(self.button("Toggle Performance Overlay", self.toggle_hud))
+        row.addWidget(self.button("Performance Center", lambda:spawn(["/usr/local/bin/mechos-performance-center"])))
+        pl.addLayout(row)
+
+        mh = QLabel("MangoApp: Shift+F12 HUD • Shift+F1 FPS limit • Shift+F4 reload config")
+        mh.setObjectName("muted")
+        mh.setWordWrap(True)
+        pl.addWidget(mh)
+        outer.addWidget(perf)
+
+        audio = self.panel()
+        al = QVBoxLayout(audio)
+        ah = QLabel("AUDIO")
+        ah.setObjectName("section")
+        al.addWidget(ah)
+        ar = QHBoxLayout()
+        ar.addWidget(self.button("Volume −", lambda:self.wpctl("5%-")))
+        ar.addWidget(self.button("Mute", self.mute))
+        ar.addWidget(self.button("Volume +", lambda:self.wpctl("5%+")))
+        al.addLayout(ar)
+        outer.addWidget(audio)
+
+        stream = self.panel()
+        sml = QVBoxLayout(stream)
+        smh = QLabel("STREAMING")
+        smh.setObjectName("section")
+        sml.addWidget(smh)
+        smr = QGridLayout()
+        smr.addWidget(self.button("Go Live", lambda:spawn(["/usr/local/bin/mechos-stream-control","start-stream"])),0,0)
+        smr.addWidget(self.button("End Stream", lambda:spawn(["/usr/local/bin/mechos-stream-control","stop-stream"])),0,1)
+        smr.addWidget(self.button("Start Recording", lambda:spawn(["/usr/local/bin/mechos-stream-control","start-record"])),1,0)
+        smr.addWidget(self.button("Stop Recording", lambda:spawn(["/usr/local/bin/mechos-stream-control","stop-record"])),1,1)
+        smr.addWidget(self.button("Stream Center", lambda:spawn(["/usr/local/bin/mechos-stream-center"])),2,0)
+        smr.addWidget(self.button("Open OBS", lambda:spawn(["/usr/local/bin/mechos-stream-control","launch-obs"])),2,1)
+        sml.addLayout(smr)
+        smr.addWidget(self.button("Low Impact Mode", lambda:spawn(["/usr/local/bin/mechos-stream-optimize","enable"])),3,0)
+        smr.addWidget(self.button("Normal Stream Mode", lambda:spawn(["/usr/local/bin/mechos-stream-optimize","disable"])),3,1)
+        stream_note = QLabel("Streaming account/profile stays configured inside OBS Studio.")
+        stream_note.setObjectName("muted")
+        stream_note.setWordWrap(True)
+        sml.addWidget(stream_note)
+        outer.addWidget(stream)
+
+        display = self.panel()
+        dl = QVBoxLayout(display)
+        dh = QLabel("DISPLAY")
+        dh.setObjectName("section")
+        dl.addWidget(dh)
+        dr = QHBoxLayout()
+        dr.addWidget(self.button("Brightness −", lambda:self.brightness("5%-")))
+        dr.addWidget(self.button("Brightness +", lambda:self.brightness("+5%")))
+        dl.addLayout(dr)
+        outer.addWidget(display)
+
+        connectivity = self.panel()
+        cl = QVBoxLayout(connectivity)
+        ch = QLabel("CONNECTIVITY")
+        ch.setObjectName("section")
+        cl.addWidget(ch)
+        cr = QHBoxLayout()
+        cr.addWidget(self.button("Toggle Wi-Fi", self.toggle_wifi))
+        cr.addWidget(self.button("Toggle Bluetooth", self.toggle_bt))
+        cl.addLayout(cr)
+        outer.addWidget(connectivity)
+
+        tools = self.panel()
+        tl = QVBoxLayout(tools)
+        th = QLabel("QUICK TOOLS")
+        th.setObjectName("section")
+        tl.addWidget(th)
+        tr = QGridLayout()
+        tr.addWidget(self.button("Update Center", lambda:spawn(["/usr/local/bin/mechos-update-center"])),0,0)
+        tr.addWidget(self.button("Controller Settings", lambda:spawn(["systemsettings","kcm_gamecontroller"])),0,1)
+        tr.addWidget(self.button("Audio Settings", lambda:spawn(["systemsettings","kcm_pulseaudio"])),1,0)
+        tr.addWidget(self.button("Recorder", self.recorder),1,1)
+        tl.addLayout(tr)
+        outer.addWidget(tools)
+
+        hotkeys = self.panel()
+        hl = QVBoxLayout(hotkeys)
+        hh = QLabel("MECHSCOPE HOTKEYS")
+        hh.setObjectName("section")
+        hl.addWidget(hh)
+        info = QLabel(
+            "Ctrl+Shift+M  Quick Actions\n"
+            "Ctrl+Shift+P  Performance Center\n"
+            "Ctrl+Shift+U  Update Center\n"
+            "Ctrl+Shift+S  Steam Gamepad UI\n"
+            "Ctrl+Shift+B  Stream Center\n"
+            "Ctrl+Shift+L  Go Live\n"
+            "Ctrl+Shift+K  End Stream\n"
+            "Ctrl+Shift+R  Toggle Recording\n"
+            "Ctrl+Shift+C  Creator Mode (from MechScope)\n"
+            "Ctrl+Shift+D  Desktop Mode (from MechScope)\n"
+            "Esc           Close Quick Actions"
+        )
+        info.setObjectName("muted")
+        hl.addWidget(info)
+        outer.addWidget(hotkeys)
+
+        close = self.button("Close", self.close)
+        outer.addWidget(close)
+        outer.addStretch()
+
+    def profile(self, name):
+        if shutil.which("powerprofilesctl"):
+            run(["powerprofilesctl","set",name])
+
+    def toggle_hud(self):
+        if shutil.which("mangohudctl"):
+            p = run(["mangohudctl","toggle-hud"])
+            if p and p.returncode == 0:
+                return
+        QMessageBox.information(
+            self, "Performance Overlay",
+            "The Gamescope MangoApp control socket is not ready.\n"
+            "Use Right Shift + F12 to toggle the performance overlay."
+        )
+
+    def wpctl(self, value):
+        if shutil.which("wpctl"):
+            run(["wpctl","set-volume","@DEFAULT_AUDIO_SINK@",value])
+
+    def mute(self):
+        if shutil.which("wpctl"):
+            run(["wpctl","set-mute","@DEFAULT_AUDIO_SINK@","toggle"])
+
+    def brightness(self, value):
+        if shutil.which("brightnessctl"):
+            run(["brightnessctl","set",value])
+
+    def toggle_wifi(self):
+        if not shutil.which("nmcli"):
+            return
+        current = out(["nmcli","radio","wifi"])
+        run(["nmcli","radio","wifi","off" if current == "enabled" else "on"])
+
+    def toggle_bt(self):
+        if not shutil.which("bluetoothctl"):
+            return
+        info = out(["bluetoothctl","show"]).lower()
+        run(["bluetoothctl","power","off" if "powered: yes" in info else "on"])
+
+    def recorder(self):
+        if shutil.which("gpu-screen-recorder-gtk"):
+            spawn(["gpu-screen-recorder-gtk"])
+        elif shutil.which("gpu-screen-recorder"):
+            spawn(["gpu-screen-recorder"])
+        else:
+            QMessageBox.information(self,"Recorder","GPU Screen Recorder is not available.")
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+            return
+        super().keyPressEvent(event)
+
+app = QApplication(sys.argv)
+app.setApplicationName("MechOS Quick Actions")
+w = QuickActions()
+w.show()
+w.raise_()
+w.activateWindow()
+sys.exit(app.exec())
+PYEOF
+chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon << "PYEOF"
+#!/usr/bin/env python3
+import os
+import select
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+try:
+    from evdev import InputDevice, list_devices, ecodes
+except Exception as exc:
+    print(f"[MechOS Quick Actions] evdev unavailable: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+UID = os.getuid()
+PIDFILE = Path(f"/tmp/mechos-quick-actions-daemon-{UID}.pid")
+LOG = Path.home()/".local/state/mechos/quick-actions-hotkeys.log"
+LOG.parent.mkdir(parents=True, exist_ok=True)
+
+overlay = None
+devices = {}
+pressed = {}
+mode_down = {}
+
+CTRL = {ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL}
+SHIFT = {ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT}
+
+def log(msg):
+    try:
+        with LOG.open("a") as f:
+            f.write(f"{time.strftime('%F %T')} {msg}\n")
+    except Exception:
+        pass
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+if PIDFILE.exists():
+    try:
+        old = int(PIDFILE.read_text().strip())
+        if old != os.getpid() and alive(old):
+            raise SystemExit(0)
+    except ValueError:
+        pass
+
+PIDFILE.write_text(str(os.getpid()))
+
+def cleanup(*_):
+    try:
+        PIDFILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, cleanup)
+signal.signal(signal.SIGINT, cleanup)
+
+def launch(cmd):
+    try:
+        subprocess.Popen(cmd)
+    except Exception as exc:
+        log(f"launch failed {cmd}: {exc}")
+
+def open_overlay():
+    global overlay
+    if overlay is not None and overlay.poll() is None:
+        return
+    try:
+        overlay = subprocess.Popen(["/usr/local/bin/mechos-quick-actions"])
+    except Exception as exc:
+        log(f"overlay launch failed: {exc}")
+
+def action(name):
+    log(f"hotkey action: {name}")
+    if name == "overlay":
+        open_overlay()
+    elif name == "performance":
+        launch(["/usr/local/bin/mechos-performance-center"])
+    elif name == "update":
+        launch(["/usr/local/bin/mechos-update-center"])
+    elif name == "steam":
+        launch(["steam","-gamepadui"])
+    elif name == "hud":
+        launch(["mangohudctl","toggle-hud"])
+    elif name == "volume-up":
+        launch(["wpctl","set-volume","@DEFAULT_AUDIO_SINK@","5%+"])
+    elif name == "volume-down":
+        launch(["wpctl","set-volume","@DEFAULT_AUDIO_SINK@","5%-"])
+    elif name == "stream-center":
+        launch(["/usr/local/bin/mechos-stream-center"])
+    elif name == "go-live":
+        launch(["/usr/local/bin/mechos-stream-control","start-stream"])
+    elif name == "end-stream":
+        launch(["/usr/local/bin/mechos-stream-control","stop-stream"])
+    elif name == "toggle-record":
+        launch(["/usr/local/bin/mechos-stream-control","toggle-record"])
+
+def rescan():
+    global devices
+    current = set(list_devices())
+
+    for path in list(devices):
+        if path not in current:
+            try:
+                devices[path].close()
+            except Exception:
+                pass
+            devices.pop(path, None)
+            pressed.pop(path, None)
+            mode_down.pop(path, None)
+
+    for path in current:
+        if path in devices:
+            continue
+        try:
+            d = InputDevice(path)
+            caps = d.capabilities()
+            keys = set(caps.get(ecodes.EV_KEY, []))
+            # Keyboard or standard gamepad button device.
+            interesting = (
+                ecodes.KEY_M in keys or
+                ecodes.BTN_MODE in keys or
+                ecodes.BTN_NORTH in keys
+            )
+            if interesting:
+                devices[path] = d
+                pressed[path] = set()
+                log(f"monitoring {path}: {d.name}")
+            else:
+                d.close()
+        except Exception:
+            pass
+
+last_scan = 0.0
+last_trigger = 0.0
+
+while True:
+    now = time.monotonic()
+    if now - last_scan > 3.0:
+        rescan()
+        last_scan = now
+
+    if not devices:
+        time.sleep(0.25)
+        continue
+
+    try:
+        ready, _, _ = select.select(list(devices.values()), [], [], 0.20)
+    except Exception:
+        devices = {}
+        continue
+
+    for d in ready:
+        path = d.path
+        try:
+            events = d.read()
+        except Exception:
+            continue
+
+        keys = pressed.setdefault(path, set())
+
+        for ev in events:
+            if ev.type != ecodes.EV_KEY:
+                continue
+
+            code = ev.code
+            if ev.value in (1,2):
+                keys.add(code)
+            elif ev.value == 0:
+                keys.discard(code)
+
+            # Keyboard combinations.
+            ctrl = bool(keys & CTRL)
+            shift = bool(keys & SHIFT)
+
+            if ev.value == 1 and ctrl and shift:
+                mapping = {
+                    ecodes.KEY_M: "overlay",
+                    ecodes.KEY_P: "performance",
+                    ecodes.KEY_U: "update",
+                    ecodes.KEY_S: "steam",
+                    ecodes.KEY_O: "hud",
+                    ecodes.KEY_B: "stream-center",
+                    ecodes.KEY_L: "go-live",
+                    ecodes.KEY_K: "end-stream",
+                    ecodes.KEY_R: "toggle-record",
+                    ecodes.KEY_EQUAL: "volume-up",
+                    ecodes.KEY_MINUS: "volume-down",
+                }
+                name = mapping.get(code)
+                if name and time.monotonic() - last_trigger > 0.35:
+                    action(name)
+                    last_trigger = time.monotonic()
+
+            # Standard Linux gamepad codes:
+            # BTN_MODE = Guide/Home, BTN_NORTH = Y/Triangle.
+            if code == ecodes.BTN_MODE:
+                if ev.value == 1:
+                    mode_down[path] = time.monotonic()
+                elif ev.value == 0:
+                    mode_down.pop(path, None)
+
+            if code == ecodes.BTN_NORTH and ev.value == 1 and path in mode_down:
+                if time.monotonic() - mode_down[path] >= 0.12 and time.monotonic() - last_trigger > 0.50:
+                    action("overlay")
+                    last_trigger = time.monotonic()
+PYEOF
+chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon
+
 cat > /workspace/archlive/airootfs/usr/local/bin/mechscope << "PYEOF"
 #!/usr/bin/env python3
 import glob
@@ -3326,6 +4686,8 @@ class MechScope(QMainWindow):
         self.clock_timer = QTimer(self)
         self.clock_timer.timeout.connect(self.refresh_stats)
         self.clock_timer.start(2000)
+        self.hotkey_daemon = None
+        self.start_hotkey_daemon()
         self.refresh_stats()
 
     def panel(self, name="panel"):
@@ -3456,6 +4818,9 @@ class MechScope(QMainWindow):
         qtitle.setObjectName("section")
         ql.addWidget(qtitle)
         actions = [
+            ("Quick Actions", ["/usr/local/bin/mechos-quick-actions"]),
+            ("Stream Center", ["/usr/local/bin/mechos-stream-center"]),
+            ("Go Live", ["/usr/local/bin/mechos-stream-control","start-stream"]),
             ("Performance Center", ["/usr/local/bin/mechos-performance-center"]),
             ("Update Center", ["/usr/local/bin/mechos-update-center"]),
             ("Controller Settings", ["systemsettings","kcm_gamecontroller"]),
@@ -3550,6 +4915,45 @@ class MechScope(QMainWindow):
         self.focusables[self.focus_index].setFocus()
 
     def keyPressEvent(self, event: QKeyEvent):
+        mods = event.modifiers()
+        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+
+        if ctrl and shift:
+            if event.key() == Qt.Key.Key_M:
+                spawn(["/usr/local/bin/mechos-quick-actions"])
+                return
+            if event.key() == Qt.Key.Key_P:
+                spawn(["/usr/local/bin/mechos-performance-center"])
+                return
+            if event.key() == Qt.Key.Key_U:
+                spawn(["/usr/local/bin/mechos-update-center"])
+                return
+            if event.key() == Qt.Key.Key_S:
+                self.open_steam()
+                return
+            if event.key() == Qt.Key.Key_C:
+                self.switch_mode("creator")
+                return
+            if event.key() == Qt.Key.Key_D:
+                self.switch_mode("desktop")
+                return
+            if event.key() == Qt.Key.Key_O:
+                spawn(["mangohudctl","toggle-hud"])
+                return
+            if event.key() == Qt.Key.Key_B:
+                spawn(["/usr/local/bin/mechos-stream-center"])
+                return
+            if event.key() == Qt.Key.Key_L:
+                spawn(["/usr/local/bin/mechos-stream-control","start-stream"])
+                return
+            if event.key() == Qt.Key.Key_K:
+                spawn(["/usr/local/bin/mechos-stream-control","stop-stream"])
+                return
+            if event.key() == Qt.Key.Key_R:
+                spawn(["/usr/local/bin/mechos-stream-control","toggle-record"])
+                return
+
         if event.key() in (Qt.Key.Key_Down, Qt.Key.Key_Right, Qt.Key.Key_S, Qt.Key.Key_D):
             self.move_focus(1)
         elif event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Left, Qt.Key.Key_W, Qt.Key.Key_A):
@@ -3562,6 +4966,26 @@ class MechScope(QMainWindow):
             self.open_steam()
         else:
             super().keyPressEvent(event)
+
+    def start_hotkey_daemon(self):
+        if not Path("/usr/local/bin/mechos-quick-actions-daemon").exists():
+            return
+        try:
+            self.hotkey_daemon = subprocess.Popen(
+                ["/usr/local/bin/mechos-quick-actions-daemon"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            self.hotkey_daemon = None
+
+    def closeEvent(self, event):
+        if self.hotkey_daemon is not None and self.hotkey_daemon.poll() is None:
+            try:
+                self.hotkey_daemon.terminate()
+            except Exception:
+                pass
+        super().closeEvent(event)
 
     def tick(self):
         self.refresh_gamepad()
@@ -3585,6 +5009,21 @@ class MechScope(QMainWindow):
             pass
 
     def refresh_stats(self):
+        low_impact = False
+        try:
+            mode_file = Path.home()/".local/state/mechos/stream-mode.json"
+            if mode_file.exists():
+                import json as _json
+                low_impact = _json.loads(mode_file.read_text()).get("mode") == "low-impact"
+        except Exception:
+            low_impact = False
+
+        # Keep system telemetry intentionally light during a live stream.
+        if low_impact:
+            self.clock_timer.setInterval(5000)
+        else:
+            self.clock_timer.setInterval(2000)
+
         self.stats_label.setText(
             f"CPU {cpu_percent()}%   •   RAM {ram_percent()}%   •   DISK {disk_percent()}%"
         )
@@ -3763,7 +5202,7 @@ while true; do
   rm -f "$MODE_FILE"
 
   echo "===== MechScope Gamescope launch $(date -Is) =====" >>"$MECHSCOPE_LOG"
-  gamescope -e -f -- /usr/local/bin/mechscope >>"$MECHSCOPE_LOG" 2>&1
+  gamescope -e -f --mangoapp -- /usr/local/bin/mechscope >>"$MECHSCOPE_LOG" 2>&1
   GS_RC=$?
   echo "[MechOS] Gamescope/MechScope exited rc=$GS_RC"
 
@@ -3963,6 +5402,7 @@ set -euxo pipefail
 
 PORT=45811
 BASE_URL="http://127.0.0.1:${PORT}"
+SUCCESS_TOKEN="${1:-}"
 PAYLOAD="/tmp/mechos-rootfs.tar.zst"
 LOG="/var/log/mechos-postinstall.log"
 
@@ -3976,33 +5416,80 @@ fi
 echo "=== MechOS post-install starting ==="
 
 # Steam and 32-bit gaming libraries need multilib.
-if grep -q '^\#\[multilib\]' /etc/pacman.conf 2>/dev/null; then
-  sed -i "/^\#\[multilib\]/,/^\#Include = \/etc\/pacman.d\/mirrorlist/ s/^\#//" /etc/pacman.conf
+if ! grep -q '^\[multilib\]' /etc/pacman.conf 2>/dev/null; then
+  sed -i \
+    '/^#\[multilib\]/,/^#Include = \/etc\/pacman.d\/mirrorlist/ s/^#//' \
+    /etc/pacman.conf
+
+  if ! grep -q '^\[multilib\]' /etc/pacman.conf; then
+    cat >> /etc/pacman.conf <<'MULTILIBEOF'
+
+[multilib]
+Include = /etc/pacman.d/mirrorlist
+MULTILIBEOF
+  fi
 fi
 
-pacman -Sy --noconfirm
+pacman -Syy --noconfirm
 
-# The installed machine gets the same core experience as the live ISO.
-# GPU-specific NVIDIA modules are selected later by mechos-gpu-setup.
-pacman -S --needed --noconfirm \
-  plasma-meta sddm konsole dolphin ark kate kdialog firefox \
-  networkmanager network-manager-applet bluez bluez-utils \
-  pipewire pipewire-alsa pipewire-pulse wireplumber \
-  xdg-desktop-portal xdg-desktop-portal-kde \
-  steam gamescope lutris gamemode lib32-gamemode \
-  mangohud lib32-mangohud wine wine-mono wine-gecko \
-  winetricks protontricks vulkan-tools \
-  mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon \
-  vulkan-intel lib32-vulkan-intel \
-  linux-headers linux-firmware \
-  ntfs-3g exfatprogs btrfs-progs dosfstools e2fsprogs f2fs-tools xfsprogs \
-  git git-lfs curl wget unzip zip p7zip sudo flatpak arch-install-scripts grub efibootmgr os-prober \
-  base-devel cmake ninja clang python python-pip python-pygame python-pyqt6 \
-  ffmpeg blender obs-studio kdenlive krita \
-  plymouth zram-generator power-profiles-daemon irqbalance cpupower \
-  amd-ucode intel-ucode switcheroo-control nvidia-prime \
-  smartmontools nvme-cli btop pacman-contrib snapper libva-utils pciutils usbutils \
-  gpu-screen-recorder gpu-screen-recorder-ui intel-media-driver libva-mesa-driver
+# Install the OS-critical runtime first. Optional creator extras must never
+# prevent a bootable MechOS installation.
+REQUIRED_PACKAGES=(
+  plasma-meta sddm konsole dolphin kdialog
+  networkmanager network-manager-applet bluez bluez-utils
+  pipewire pipewire-alsa pipewire-pulse wireplumber
+  xdg-desktop-portal xdg-desktop-portal-kde
+  steam gamescope lutris gamemode lib32-gamemode
+  mangohud lib32-mangohud wine winetricks protontricks
+  vulkan-tools mesa lib32-mesa
+  vulkan-radeon lib32-vulkan-radeon
+  vulkan-intel lib32-vulkan-intel
+  linux-headers linux-firmware
+  ntfs-3g exfatprogs btrfs-progs dosfstools e2fsprogs f2fs-tools xfsprogs
+  git curl wget unzip zip p7zip sudo flatpak
+  arch-install-scripts grub efibootmgr os-prober
+  python python-pygame python-evdev python-websocket-client python-pyqt6 brightnessctl
+  ffmpeg obs-studio
+  plymouth zram-generator power-profiles-daemon irqbalance cpupower
+  amd-ucode intel-ucode switcheroo-control
+  smartmontools nvme-cli btop pacman-contrib snapper libva-utils pciutils usbutils
+)
+
+missing_required=()
+for pkg in "${REQUIRED_PACKAGES[@]}"; do
+  pacman -Si "$pkg" >/dev/null 2>&1 || missing_required+=("$pkg")
+done
+
+if [ "${#missing_required[@]}" -gt 0 ]; then
+  echo "ERROR: Required MechOS packages are unavailable:" >&2
+  printf '  - %s\n' "${missing_required[@]}" >&2
+  exit 40
+fi
+
+pacman -S --needed --noconfirm "${REQUIRED_PACKAGES[@]}"
+
+# Large creator applications and vendor-specific helpers are useful but not
+# required for the first successful boot. Creator Mode can install/retry them
+# after installation.
+OPTIONAL_PACKAGES=(
+  firefox
+  ark kate
+  wine-mono wine-gecko
+  nvidia-prime
+  blender kdenlive krita
+  base-devel cmake ninja clang python-pip
+  gpu-screen-recorder gpu-screen-recorder-ui
+  intel-media-driver libva-mesa-driver
+)
+
+for pkg in "${OPTIONAL_PACKAGES[@]}"; do
+  if pacman -Si "$pkg" >/dev/null 2>&1; then
+    pacman -S --needed --noconfirm "$pkg" || \
+      echo "WARN: Optional package failed and was skipped: $pkg"
+  else
+    echo "WARN: Optional package unavailable and was skipped: $pkg"
+  fi
+done
 
 curl -fsSL "$BASE_URL/mechos-rootfs.tar.zst" -o "$PAYLOAD"
 tar --zstd -xpf "$PAYLOAD" -C /
@@ -4148,6 +5635,9 @@ touch /var/lib/mechos/installed
 echo "=== MechOS post-install complete ==="
 echo "Installed user: $MECHOS_USER"
 echo "Default session: MechOS Gaming Mode / MechScope"
+if [ -n "$SUCCESS_TOKEN" ]; then
+  curl -sS "$BASE_URL/$SUCCESS_TOKEN" >/dev/null 2>&1 || true
+fi
 TARGETEOF
 chmod 755 /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
 
@@ -4183,6 +5673,11 @@ copy_payload() {
 
 for f in \
   /usr/local/bin/mechscope \
+  /usr/local/bin/mechos-quick-actions \
+  /usr/local/bin/mechos-stream-control \
+  /usr/local/bin/mechos-stream-optimize \
+  /usr/local/bin/mechos-stream-center \
+  /usr/local/bin/mechos-quick-actions-daemon \
   /usr/local/bin/mechos-creator-mode \
   /usr/local/bin/mechos-creator-app \
   /usr/local/libexec/mechos-creator-app-installer \
@@ -4202,6 +5697,7 @@ for f in \
   /usr/local/bin/mechos-recovery-center \
   /usr/local/bin/mechos-recovery-helper \
   /usr/local/bin/mechos-hardware-scan \
+  /usr/local/bin/mechos-installer-doctor \
   /usr/share/applications/mechscope.desktop \
   /usr/share/applications/mechos-return-to-mechscope.desktop \
   /usr/share/applications/mechos-performance-center.desktop \
@@ -4242,10 +5738,16 @@ file_permissions["/usr/local/bin/mechos-creator-session"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-gaming-session"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-boot-diagnostics"]="0:0:755"
 file_permissions["/usr/local/bin/mechscope"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-quick-actions"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-stream-control"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-stream-optimize"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-stream-center"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-quick-actions-daemon"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-return-to-mechscope"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-performance-center"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-firstboot"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-install"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-installer-doctor"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-live-welcome"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-live-setup"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-recovery-center"]="0:0:755"
@@ -4271,6 +5773,11 @@ chmod 755 \
   /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session \
   /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session \
   /workspace/archlive/airootfs/usr/local/bin/mechscope \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon \
   /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope \
   /workspace/archlive/airootfs/usr/local/bin/mechos-performance-center
 chmod 440 /workspace/archlive/airootfs/etc/sudoers.d/10-mechos-live
@@ -4295,6 +5802,21 @@ test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.want
 test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/switcheroo-control.service
 grep -q 'DeviceTimeout=3' /workspace/archlive/airootfs/etc/plymouth/plymouthd.conf
 test -x /workspace/archlive/airootfs/usr/local/bin/mechscope
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
+grep -q "low-impact" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
+grep -q "hardware encoder" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
+grep -q "StartStream" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
+grep -q "StopStream" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
+grep -q "MECHOS STREAM CENTER" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
+grep -q "Ctrl+Shift+L" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon
+grep -q "MECHOS QUICK ACTIONS" /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
+grep -q "BTN_MODE" /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon
+grep -q "Ctrl+Shift+M" /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
+grep -q -- "--mangoapp" /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session
 grep -q "MECHSCOPE 2.0" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "RECENT LIBRARY" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "PROJECT MANAGER" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
@@ -4307,6 +5829,12 @@ test -x /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-performance-center
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-firstboot
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-install
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-installer-doctor
+grep -q "MECHOS INSTALLER BACKEND" /workspace/archlive/airootfs/usr/local/bin/mechos-install
+grep -q "SUCCESS_TOKEN" /workspace/archlive/airootfs/usr/local/bin/mechos-install
+grep -q "Installation completed without any errors" /workspace/archlive/airootfs/usr/local/bin/mechos-install
+grep -q "REQUIRED_PACKAGES" /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
+grep -q "OPTIONAL_PACKAGES" /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-live-welcome
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-recovery-center
