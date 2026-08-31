@@ -911,7 +911,6 @@ POSTINSTALL_ONLY_RUNTIME=(
   usr/local/bin/mechos-quick-actions-daemon
   usr/local/bin/mechos-stream-control
   usr/local/bin/mechos-stream-center
-  usr/local/bin/mechos-stream-optimize
   usr/local/bin/mechos-creator-mode
   usr/local/bin/mechos-creator-app
   usr/local/libexec/mechos-creator-app-installer
@@ -936,7 +935,7 @@ if [ "$PHASE" = "final" ]; then
   done
 
   # These are deliberately absent from Live after payload staging.
-  for name in     mechos-quick-actions     mechos-quick-actions-daemon     mechos-stream-control     mechos-stream-center     mechos-stream-optimize     mechos-creator-mode     mechos-creator-app     mechos-creator-session     mechos-creator-setup; do
+  for name in     mechos-quick-actions     mechos-quick-actions-daemon     mechos-stream-control     mechos-stream-center     mechos-creator-mode     mechos-creator-app     mechos-creator-session     mechos-creator-setup; do
     [ ! -e "$BIN/$name" ] || fail "post-install-only runtime leaked back into Live: $name"
   done
 
@@ -1106,7 +1105,6 @@ required_installed=(
   /usr/local/bin/mechos-quick-actions-daemon
   /usr/local/bin/mechos-stream-control
   /usr/local/bin/mechos-stream-center
-  /usr/local/bin/mechos-stream-optimize
 )
 
 for path in "${required_installed[@]}"; do
