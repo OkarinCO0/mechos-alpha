@@ -26,14 +26,14 @@ jobs:
       - name: Validate repair files
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/patch-mechos-builder-v0.2.1.py
-          bash -n scripts/mechos-v0.2.1-runtime-repair.sh
+          python3 -m py_compile scripts/patch-mechos-builder-v0.2.2.py
+          bash -n scripts/mechos-v0.2.2-runtime-repair.sh
           bash -n scripts/build-mechos-archiso.sh
 
-      - name: Patch current builder for v0.2.1 runtime repair
+      - name: Patch current builder for v0.2.2 runtime repair
         run: |
           set -euo pipefail
-          python3 scripts/patch-mechos-builder-v0.2.1.py scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-builder-v0.2.2.py scripts/build-mechos-archiso.sh
           bash -n scripts/build-mechos-archiso.sh
           grep -n 'MECHOS_V0_2_1_REPAIR' scripts/build-mechos-archiso.sh
 
@@ -64,7 +64,7 @@ jobs:
       - name: Upload MechOS ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MechOS-v0.2.1-Alpha-x86_64
+          name: MechOS-v0.2.2-Alpha-x86_64
           path: |
             out/**/*.iso
             out/**/*.iso.sha256
