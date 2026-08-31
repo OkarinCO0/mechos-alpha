@@ -4322,6 +4322,7 @@ grep -q "HARDWARE SUMMARY" /workspace/archlive/airootfs/usr/local/bin/mechos-liv
 grep -q "INSTALL OVERVIEW" /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
 grep -q "MECHOS RECOVERY CENTER" /workspace/archlive/airootfs/usr/local/bin/mechos-recovery-center
 grep -q "repair-boot" /workspace/archlive/airootfs/usr/local/bin/mechos-recovery-helper
+grep -q "rollback" /workspace/archlive/airootfs/usr/local/bin/mechos-recovery-helper
 grep -q "rollback-pending" /workspace/archlive/airootfs/usr/local/bin/mechos-update-helper
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-session-select
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-gpu-setup

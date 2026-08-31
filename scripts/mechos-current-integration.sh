@@ -221,54 +221,252 @@ cat > "$BIN/mechos-recovery-helper" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-cmd="${1:-help}"
-case "$cmd" in
-  hardware)
-    exec /usr/local/bin/mechos-hardware-scan
+MNT="/mnt/mechos-recovery"
+
+cleanup_mounts() {
+  umount -R "$MNT" 2>/dev/null || true
+  rm -rf "$MNT" 2>/dev/null || true
+}
+
+trap cleanup_mounts EXIT
+
+mount_root() {
+  local dev="$1"
+  local mode="${2:-rw}"
+  cleanup_mounts
+  mkdir -p "$MNT"
+
+  local opts=""
+  [ "$mode" = "ro" ] && opts="-o ro"
+
+  if mount $opts "$dev" "$MNT" 2>/dev/null; then
+    if [ -f "$MNT/etc/os-release" ]; then
+      return 0
+    fi
+    umount "$MNT" 2>/dev/null || true
+  fi
+
+  # Common Archinstall Btrfs root layout.
+  if [ "$(lsblk -no FSTYPE "$dev" 2>/dev/null || true)" = "btrfs" ]; then
+    local bopts="subvol=@"
+    [ "$mode" = "ro" ] && bopts="ro,subvol=@"
+    if mount -o "$bopts" "$dev" "$MNT" 2>/dev/null && [ -f "$MNT/etc/os-release" ]; then
+      return 0
+    fi
+  fi
+
+  echo "Unable to mount an installed root filesystem from $dev" >&2
+  return 1
+}
+
+resolve_fstab_source() {
+  local src="$1"
+  case "$src" in
+    UUID=*) blkid -U "${src#UUID=}" 2>/dev/null || true ;;
+    PARTUUID=*) blkid -t "PARTUUID=${src#PARTUUID=}" -o device 2>/dev/null | head -n1 ;;
+    LABEL=*) blkid -L "${src#LABEL=}" 2>/dev/null || true ;;
+    /dev/*) printf '%s\n' "$src" ;;
+    *) printf '%s\n' "" ;;
+  esac
+}
+
+mount_target_esp() {
+  local provided="${1:-}"
+  local esp_mp=""
+  local esp_src=""
+
+  # Prefer the target's own fstab mapping.
+  while read -r src mp fs rest; do
+    case "$mp:$fs" in
+      /efi:vfat|/boot/efi:vfat|/boot:vfat|/efi:fat|/boot/efi:fat|/boot:fat)
+        esp_mp="$mp"
+        esp_src="$(resolve_fstab_source "$src")"
+        break
+        ;;
+    esac
+  done < <(grep -Ev '^[[:space:]]*(#|$)' "$MNT/etc/fstab" 2>/dev/null || true)
+
+  if [ -n "$provided" ]; then
+    esp_src="$provided"
+  fi
+  [ -n "$esp_mp" ] || esp_mp="/boot"
+
+  if [ -n "$esp_src" ]; then
+    mkdir -p "$MNT$esp_mp"
+    if ! mountpoint -q "$MNT$esp_mp"; then
+      mount "$esp_src" "$MNT$esp_mp"
+    fi
+  fi
+
+  printf '%s\n' "$esp_mp"
+}
+
+scan_roots() {
+  local tmp="/tmp/mechos-root-scan"
+  mkdir -p "$tmp"
+
+  while read -r dev type fs; do
+    [ "$type" = "part" ] || [ "$type" = "lvm" ] || [ "$type" = "crypt" ] || continue
+    case "$fs" in
+      ext4|btrfs|xfs|f2fs) ;;
+      *) continue ;;
+    esac
+
+    cleanup_mounts
+    mkdir -p "$MNT"
+
+    if mount -o ro "$dev" "$MNT" 2>/dev/null; then
+      :
+    elif [ "$fs" = "btrfs" ] && mount -o ro,subvol=@ "$dev" "$MNT" 2>/dev/null; then
+      :
+    else
+      continue
+    fi
+
+    if [ -f "$MNT/etc/os-release" ]; then
+      os="$(. "$MNT/etc/os-release"; printf '%s' "${PRETTY_NAME:-${NAME:-Linux}}")"
+      home_line="$(awk '$2=="/home" {print $1" "$3" "$4; exit}' "$MNT/etc/fstab" 2>/dev/null || true)"
+      mechos="no"
+      [ -f "$MNT/etc/mechos-release" ] && mechos="yes"
+      printf '%s|%s|%s|%s|%s\n' "$dev" "$fs" "$os" "$mechos" "${home_line:-none}"
+    fi
+
+    cleanup_mounts
+  done < <(lsblk -prno NAME,TYPE,FSTYPE)
+}
+
+scan_esps() {
+  while read -r dev type fs label size; do
+    [ "$type" = "part" ] || continue
+    case "$fs" in
+      vfat|fat|fat32) printf '%s|%s|%s|%s\n' "$dev" "$fs" "${label:-EFI}" "$size" ;;
+    esac
+  done < <(lsblk -prno NAME,TYPE,FSTYPE,LABEL,SIZE)
+}
+
+repair_boot() {
+  local rootdev="$1"
+  local espdev="${2:-}"
+
+  mount_root "$rootdev" rw
+  local esp_mp
+  esp_mp="$(mount_target_esp "$espdev")"
+
+  echo "Mounted root at $MNT"
+  echo "EFI mountpoint: $esp_mp"
+
+  # Refresh initramfs first.
+  arch-chroot "$MNT" mkinitcpio -P
+
+  if [ -f "$MNT$esp_mp/loader/loader.conf" ] || \
+     [ -d "$MNT$esp_mp/EFI/systemd" ] || \
+     [ -d "$MNT/boot/loader" ]; then
+    echo "Detected systemd-boot."
+    arch-chroot "$MNT" bootctl install
+  elif [ -f "$MNT/boot/grub/grub.cfg" ] || arch-chroot "$MNT" pacman -Q grub >/dev/null 2>&1; then
+    echo "Detected GRUB."
+    if [ -d /sys/firmware/efi ]; then
+      arch-chroot "$MNT" grub-install \
+        --target=x86_64-efi \
+        --efi-directory="$esp_mp" \
+        --bootloader-id=MechOS
+    else
+      parent="$(lsblk -no PKNAME "$rootdev" 2>/dev/null | head -n1)"
+      [ -n "$parent" ] || {
+        echo "Could not determine BIOS boot disk." >&2
+        return 1
+      }
+      arch-chroot "$MNT" grub-install "/dev/$parent"
+    fi
+    arch-chroot "$MNT" grub-mkconfig -o /boot/grub/grub.cfg
+  else
+    echo "No supported installed bootloader was detected." >&2
+    return 1
+  fi
+
+  echo "Boot repair completed."
+}
+
+show_logs() {
+  local rootdev="${1:-}"
+  echo "=== Live installer logs ==="
+  for f in \
+    /var/log/mechos-installer.log \
+    /var/log/mechos-installer-hardware.log \
+    /var/log/archinstall/install.log \
+    /tmp/mechos-installer-http.log; do
+    if [ -f "$f" ]; then
+      echo
+      echo "----- $f -----"
+      tail -n 250 "$f"
+    fi
+  done
+
+  if [ -n "$rootdev" ]; then
+    mount_root "$rootdev" ro || return 0
+    for f in \
+      "$MNT/var/log/mechos-postinstall.log" \
+      "$MNT/var/log/mechos-update.log" \
+      "$MNT/var/lib/mechos/update-history.log"; do
+      if [ -f "$f" ]; then
+        echo
+        echo "----- ${f#"$MNT"} -----"
+        tail -n 250 "$f"
+      fi
+    done
+  fi
+}
+
+rollback_failed_update() {
+  local rootdev="$1"
+  mount_root "$rootdev" rw
+
+  local marker="$MNT/var/lib/mechos/rollback-pending"
+  if [ ! -s "$marker" ]; then
+    echo "No failed-update rollback marker exists." >&2
+    return 2
+  fi
+
+  local snap
+  snap="$(head -n1 "$marker" | tr -cd '0-9')"
+  [ -n "$snap" ] || {
+    echo "Rollback marker is invalid." >&2
+    return 1
+  }
+
+  if [ "$(findmnt -n -o FSTYPE -T "$MNT" 2>/dev/null || true)" != "btrfs" ]; then
+    echo "Automatic rollback is available only for a Btrfs root filesystem." >&2
+    return 3
+  fi
+
+  if ! arch-chroot "$MNT" snapper -c root list >/dev/null 2>&1; then
+    echo "The target does not have a working Snapper root configuration." >&2
+    return 4
+  fi
+
+  echo "Rolling the target back to pre-update snapshot $snap..."
+  arch-chroot "$MNT" snapper -c root rollback "$snap"
+  arch-chroot "$MNT" mkinitcpio -P || true
+
+  mv "$marker" "$marker.applied-$(date +%s)"
+  echo "Rollback prepared. Reboot the installed system."
+}
+
+case "${1:-}" in
+  scan-roots) scan_roots ;;
+  scan-esps) scan_esps ;;
+  repair-boot)
+    [ "$#" -ge 2 ] || { echo "Usage: $0 repair-boot ROOTDEV [ESPDEV]" >&2; exit 2; }
+    repair_boot "$2" "${3:-}"
     ;;
-  network)
-    echo "=== NetworkManager ==="
-    systemctl --no-pager --full status NetworkManager.service 2>/dev/null || true
-    echo
-    nmcli device status 2>/dev/null || true
-    echo
-    ip addr 2>/dev/null || true
-    ;;
-  boot-info)
-    echo "=== Firmware / boot mode ==="
-    if [ -d /sys/firmware/efi ]; then echo "UEFI boot detected"; else echo "Legacy/BIOS boot detected"; fi
-    echo
-    echo "=== Block devices ==="
-    lsblk -f 2>/dev/null || true
-    echo
-    echo "=== Boot entries ==="
-    bootctl status 2>/dev/null || true
-    ;;
-  logs)
-    echo "=== Failed services ==="
-    systemctl --failed --no-pager 2>/dev/null || true
-    echo
-    echo "=== Current boot errors ==="
-    journalctl -b -p err --no-pager -n 200 2>/dev/null || true
-    ;;
-  preserve-home)
-    exec /usr/local/bin/mechos-preserve-home
-    ;;
-  installer)
-    exec /usr/local/bin/mechos-install
+  logs) show_logs "${2:-}" ;;
+  rollback)
+    [ "$#" -eq 2 ] || { echo "Usage: $0 rollback ROOTDEV" >&2; exit 2; }
+    rollback_failed_update "$2"
     ;;
   *)
-    cat <<'TXT'
-Usage: mechos-recovery-helper <command>
-
-Commands:
-  hardware       Hardware report
-  network        Network diagnostics
-  boot-info      Boot and storage diagnostics
-  logs           Failed services and current-boot errors
-  preserve-home  Non-destructive reinstall guide
-  installer      Launch the guided MechOS installer
-TXT
+    echo "Usage: $0 {scan-roots|scan-esps|repair-boot|logs|rollback}" >&2
+    exit 2
     ;;
 esac
 EOF
@@ -281,122 +479,197 @@ cat > "$BIN/mechos-recovery-center" <<'PYEOF'
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QApplication,
-    QHBoxLayout,
-    QLabel,
-    QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
+    QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QMainWindow,
+    QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 )
 
+HELPER = "/usr/local/bin/mechos-recovery-helper"
+STYLE = """
+QWidget { background:#09060f; color:#f3eaff; font-family:Sans Serif; }
+QFrame#panel { background:#15101f; border:1px solid #39254a; border-radius:14px; }
+QPushButton { background:#251533; border:1px solid #714394; border-radius:10px;
+              padding:11px 16px; font-weight:600; }
+QPushButton:hover { background:#352047; border-color:#a45bd5; }
+QComboBox,QPlainTextEdit { background:#0b0810; border:1px solid #39254a;
+                          border-radius:8px; padding:8px; }
+"""
 
-def run_capture(args):
-    try:
-        p = subprocess.run(args, text=True, capture_output=True, timeout=25, check=False)
-        out = (p.stdout or "") + (p.stderr or "")
-        return out.strip() or f"Command exited with code {p.returncode}."
-    except Exception as exc:
-        return f"Could not run {' '.join(args)}: {exc}"
-
-
-class RecoveryCenter(QMainWindow):
+class Recovery(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("MechOS Recovery Center")
-        self.resize(1050, 700)
+        self.resize(1050, 720)
+        self.setStyleSheet(STYLE)
+        self.roots = []
+        self.esps = []
+        self.build_ui()
+        self.rescan()
 
+    def build_ui(self):
         root = QWidget()
-        self.setCentralWidget(root)
-        layout = QHBoxLayout(root)
+        outer = QVBoxLayout(root)
+        outer.setContentsMargins(28,24,28,24)
+        outer.setSpacing(15)
 
-        sidebar = QVBoxLayout()
-        title = QLabel("MECHOS\nRECOVERY")
-        title.setFont(QFont("Sans", 22, QFont.Weight.Bold))
-        sidebar.addWidget(title)
+        title = QLabel("MECHOS RECOVERY CENTER")
+        title.setFont(QFont("Sans Serif", 24, QFont.Weight.Bold))
+        outer.addWidget(title)
+        sub = QLabel("Repair boot • inspect installations • recover failed updates • view logs")
+        sub.setStyleSheet("color:#b5a4c1;")
+        outer.addWidget(sub)
 
-        actions = [
-            ("Hardware Scan", lambda: self.show_cmd("hardware")),
-            ("Network Diagnostics", lambda: self.show_cmd("network")),
-            ("Boot / Disk Info", lambda: self.show_cmd("boot-info")),
-            ("System Logs", lambda: self.show_cmd("logs")),
-            ("Preserve Home Guide", lambda: self.show_cmd("preserve-home")),
-            ("Open Terminal", self.open_terminal),
-            ("Install MechOS", self.install_mechos),
-        ]
-        for text, callback in actions:
-            btn = QPushButton(text)
-            btn.setMinimumHeight(48)
-            btn.clicked.connect(callback)
-            sidebar.addWidget(btn)
-        sidebar.addStretch(1)
+        p = QFrame(); p.setObjectName("panel")
+        pl = QVBoxLayout(p)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Installed system"))
+        self.root_combo = QComboBox()
+        row.addWidget(self.root_combo, 2)
+        row.addWidget(QLabel("EFI partition"))
+        self.esp_combo = QComboBox()
+        row.addWidget(self.esp_combo, 2)
+        rescan = QPushButton("Rescan")
+        rescan.clicked.connect(self.rescan)
+        row.addWidget(rescan)
+        pl.addLayout(row)
+        outer.addWidget(p)
 
-        self.output = QTextEdit()
+        actions = QHBoxLayout()
+        repair = QPushButton("Repair Boot")
+        repair.clicked.connect(self.repair_boot)
+        actions.addWidget(repair)
+        rollback = QPushButton("Rollback Failed Update")
+        rollback.clicked.connect(self.rollback)
+        actions.addWidget(rollback)
+        logs = QPushButton("Load Install / Update Logs")
+        logs.clicked.connect(self.load_logs)
+        actions.addWidget(logs)
+        hw = QPushButton("Hardware Scan")
+        hw.clicked.connect(self.hardware)
+        actions.addWidget(hw)
+        outer.addLayout(actions)
+
+        self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
+        self.output.setPlaceholderText("Recovery output appears here.")
+        outer.addWidget(self.output, 1)
+
+        note = QLabel(
+            "Boot Repair does not repartition or format disks. Rollback is offered only when "
+            "MechOS recorded a valid pre-update Snapper snapshot on a Btrfs installation."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color:#a995b6;")
+        outer.addWidget(note)
+        self.setCentralWidget(root)
+
+    def run(self, args, privileged=False):
+        cmd = [HELPER] + args
+        if privileged:
+            cmd = ["sudo", "-n"] + cmd
+        try:
+            out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
+            self.output.setPlainText(out)
+            return True
+        except subprocess.CalledProcessError as e:
+            self.output.setPlainText(e.output or str(e))
+            return False
+
+    def rescan(self):
+        self.root_combo.clear(); self.esp_combo.clear()
+        self.roots = []
+        self.esps = []
+        try:
+            out = subprocess.check_output([HELPER, "scan-roots"], text=True)
+            for line in out.splitlines():
+                if not line.strip(): continue
+                fields = line.split("|")
+                dev = fields[0]
+                self.roots.append(dev)
+                desc = " • ".join(fields[:4])
+                self.root_combo.addItem(desc, dev)
+        except Exception as e:
+            self.output.setPlainText(str(e))
+
+        try:
+            out = subprocess.check_output([HELPER, "scan-esps"], text=True)
+            for line in out.splitlines():
+                if not line.strip(): continue
+                fields = line.split("|")
+                dev = fields[0]
+                self.esps.append(dev)
+                self.esp_combo.addItem(" • ".join(fields), dev)
+        except Exception:
+            pass
+
+        self.esp_combo.insertItem(0, "Auto-detect from installed fstab", "")
         self.output.setPlainText(
-            "MechOS Recovery Center Alpha\n\n"
-            "Use the diagnostic tools on the left. Recovery diagnostics do not "
-            "change disks. Installation remains guided by Archinstall so disk "
-            "selection and formatting choices stay visible before confirmation."
+            f"Detected {len(self.roots)} Linux root candidate(s) and "
+            f"{len(self.esps)} EFI partition candidate(s)."
         )
 
-        left = QWidget()
-        left.setLayout(sidebar)
-        left.setMaximumWidth(300)
-        layout.addWidget(left)
-        layout.addWidget(self.output, 1)
+    def selected_root(self):
+        return self.root_combo.currentData() or ""
 
-        self.setStyleSheet("""
-            QMainWindow, QWidget { background: #090b16; color: #eef0ff; }
-            QPushButton {
-                background: #171a33; border: 1px solid #6657ff;
-                border-radius: 8px; padding: 10px; text-align: left;
-            }
-            QPushButton:hover { background: #26204a; }
-            QTextEdit { background: #0d1020; border: 1px solid #34365d; padding: 12px; }
-        """)
+    def selected_esp(self):
+        return self.esp_combo.currentData() or ""
 
-    def show_cmd(self, name):
-        self.output.setPlainText(run_capture(["/usr/local/bin/mechos-recovery-helper", name]))
+    def repair_boot(self):
+        root = self.selected_root()
+        if not root:
+            QMessageBox.warning(self, "MechOS Recovery", "Select an installed system first.")
+            return
+        if QMessageBox.question(
+            self, "Repair boot",
+            f"Repair the boot files for:\n{root}\n\n"
+            "This rebuilds initramfs and reinstalls the detected bootloader. "
+            "It does not format partitions."
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        args = ["repair-boot", root]
+        esp = self.selected_esp()
+        if esp: args.append(esp)
+        self.run(args, True)
 
-    def open_terminal(self):
-        for cmd in (["konsole"], ["xterm"]):
-            if shutil_which(cmd[0]):
-                subprocess.Popen(cmd)
-                return
-        QMessageBox.warning(self, "Terminal", "No supported terminal launcher was found.")
+    def rollback(self):
+        root = self.selected_root()
+        if not root:
+            QMessageBox.warning(self, "MechOS Recovery", "Select an installed system first.")
+            return
+        if QMessageBox.question(
+            self, "Rollback failed update",
+            "Use the pre-update snapshot recorded by MechOS?\n\n"
+            "This is available only on compatible Btrfs/Snapper installations."
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self.run(["rollback", root], True)
 
-    def install_mechos(self):
-        reply = QMessageBox.warning(
-            self,
-            "Install MechOS",
-            "The installer can erase a disk depending on the choices you make. "
-            "Use a VM or spare disk for Alpha testing and review Archinstall's "
-            "final disk summary before confirming.\n\nOpen the installer?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            subprocess.Popen(["/usr/local/bin/mechos-install"])
+    def load_logs(self):
+        root = self.selected_root()
+        args = ["logs"]
+        if root: args.append(root)
+        self.run(args, False)
 
+    def hardware(self):
+        try:
+            out = subprocess.check_output(
+                ["/usr/local/bin/mechos-hardware-scan"], text=True, stderr=subprocess.STDOUT
+            )
+            self.output.setPlainText(out)
+        except Exception as e:
+            self.output.setPlainText(str(e))
 
-def shutil_which(name):
-    from shutil import which
-    return which(name)
+def main():
+    app = QApplication(sys.argv)
+    w = Recovery()
+    w.show()
+    sys.exit(app.exec())
 
-
-app = QApplication(sys.argv)
-app.setApplicationName("MechOS Recovery Center")
-win = RecoveryCenter()
-win.show()
-sys.exit(app.exec())
+if __name__ == "__main__":
+    main()
 PYEOF
 
 # ---------------------------------------------------------------------------
@@ -630,6 +903,13 @@ if [ "$PHASE" = "final" ]; then
   for name in "${CORE_RUNTIME[@]}"; do
     [ -x "$BIN/$name" ] || fail "current builder lost required core runtime: $name"
   done
+fi
+
+if [ "$PHASE" = "final" ]; then
+  grep -q "repair-boot" "$BIN/mechos-recovery-helper" || fail "Recovery Boot Repair command missing"
+  grep -q "rollback_failed_update" "$BIN/mechos-recovery-helper" || fail "Recovery rollback command missing"
+  grep -q "Repair Boot" "$BIN/mechos-recovery-center" || fail "Recovery Center Repair Boot UI missing"
+  grep -q "Rollback Failed Update" "$BIN/mechos-recovery-center" || fail "Recovery Center rollback UI missing"
 fi
 
 # Stage cumulative repaired tools through the existing install payload.
