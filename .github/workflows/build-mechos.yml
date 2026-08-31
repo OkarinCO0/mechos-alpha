@@ -53,22 +53,34 @@ jobs:
       - name: Verify ISO and checksum
         run: |
           set -euo pipefail
+
+          # ArchISO is built inside a privileged/root Docker container, so its
+          # output can be owned by root. Return ownership to the GitHub runner
+          # before creating checksum files or uploading artifacts.
+          sudo chown -R "$(id -u):$(id -g)" out
+          chmod -R u+rwX out
+
           ISO="$(find out -maxdepth 2 -type f -name '*.iso' -print -quit)"
           test -n "$ISO"
           test -s "$ISO"
+
           ISO_DIR="$(dirname "$ISO")"
           ISO_NAME="$(basename "$ISO")"
+
           (
             cd "$ISO_DIR"
+            rm -f "$ISO_NAME.sha256"
             sha256sum "$ISO_NAME" > "$ISO_NAME.sha256"
             sha256sum -c "$ISO_NAME.sha256"
           )
+
+          test -s "$ISO.sha256"
           ls -lh "$ISO" "$ISO.sha256"
 
       - name: Upload MechOS ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MechOS-v0.3.0-Hotfix-RecoveryFix-x86_64
+          name: MechOS-v0.3.0-Hotfix-ArtifactFix-x86_64
           path: |
             out/**/*.iso
             out/**/*.iso.sha256
