@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
+source /usr/local/lib/mechos/runtime.sh
+if mechos_is_live; then
+  echo 'Updates are disabled in the MechOS live ISO.' >&2
+  exit 2
+fi
+
 if [[ $EUID -ne 0 ]]; then exec sudo "$0" "$@"; fi
 /usr/local/bin/mechos-snapshot pre-update || true
-dnf -y upgrade --refresh
-/usr/local/bin/mechos-gpu-setup || true
+pacman -Syu --noconfirm
+flatpak update -y --noninteractive 2>/dev/null || true
+/usr/local/bin/mechos-gpu-setup --apply || true

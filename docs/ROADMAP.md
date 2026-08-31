@@ -1,44 +1,39 @@
 # MechOS roadmap
 
-## 0.3 Alpha — graphical installer
+## 0.3.0 Alpha — current
 
-- Auto-open MechOS live welcome screen
-- One-click graphical Install MechOS launcher
-- Fedora Anaconda WebUI included explicitly
-- Live USB defaults to KDE; installed system defaults to MechScope
-- Live mode no longer runs installed-system Steam/NVIDIA firstboot provisioning
-- MechOS branding layer for Anaconda WebUI
+- Arch Linux and ArchISO build pipeline
+- KDE Plasma live desktop
+- MechOS graphical Setup Center with guided Archinstall handoff
+- MechScope gaming session and Plasma fallback
+- Steam, Gamescope, Lutris, Wine and Proton utilities
+- AMD, Intel and NVIDIA package paths
+- Creator Mode package groups and one-click installers
+- Post-install, update, performance and recovery centers
+- Live-versus-installed runtime separation
+- Automated static validation on pull requests and `main`
 
-## 0.2 Alpha
-- USB-bootable ISO build project
-- Fedora 44 KDE base
-- Gamescope + Steam MechScope session
-- Desktop Mode
-- NVIDIA/AMD detection
-- Lutris
-- boot branding
-- 19 wallpapers
-- creator setup hooks
+## 0.3.x stabilization
 
-## 0.3
-- first-run graphical MechOS setup wizard
-- Steam sign-in onboarding
-- gamepad-only setup path
-- controller/Bluetooth pairing page
-- robust multi-GPU selection
-- HDR/VRR capability detection
-- Btrfs snapshot UI
+- complete clean-VM install test matrix
+- controller-first setup and Bluetooth pairing
+- multi-GPU and older-NVIDIA compatibility handling
+- clearer installer progress and failure recovery
+- reduce ISO size and split optional creator packages
+- signed release checksums
 
 ## 0.4
-- MechClip system service and capture integration
-- MechOS Creator dashboard
-- Unity project version guardrails
-- optional VRChat VPM manager
-- Unreal authorized installer helper
+
+- MechClip service and capture integration
+- VRChat creator workflow helpers
+- Unreal Engine authorized installer helper
+- MechScope store/library aggregation improvements
+- RadarAI issue-reporting integration with reviewable pull requests
 
 ## 1.0 goals
-- signed/reproducible image pipeline
-- installer branding
-- update channels and rollback UI
-- automated hardware test matrix
-- stable MechScope boot path on AMD and NVIDIA
+
+- reproducible and signed image pipeline
+- stable update channels and rollback UI
+- automated AMD, Intel and NVIDIA hardware testing
+- polished gamepad-only setup
+- stable MechScope boot and desktop switching

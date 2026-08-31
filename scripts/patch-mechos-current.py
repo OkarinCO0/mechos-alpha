@@ -8,14 +8,12 @@ from pathlib import Path
 
 MARKER_EARLY = "# MECHOS_CURRENT_INTEGRATION_EARLY"
 MARKER_LATE = "# MECHOS_CURRENT_INTEGRATION_LATE"
-CALL_EARLY = f"""
-{MARKER_EARLY}
+CALL_EARLY = f"""{MARKER_EARLY}
 # Apply the cumulative MechOS runtime/installer integration.
 bash /workspace/scripts/mechos-current-integration.sh early
 
 """
-CALL_LATE = f"""
-{MARKER_LATE}
+CALL_LATE = f"""{MARKER_LATE}
 # Re-apply after all legacy builder blocks so current fixes win.
 bash /workspace/scripts/mechos-current-integration.sh final
 

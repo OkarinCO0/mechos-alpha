@@ -3,7 +3,7 @@ Description=MechOS first-boot gaming and GPU setup
 After=network-online.target
 Wants=network-online.target
 Before=sddm.service
-ConditionPathExists=!/run/initramfs/live
+ConditionPathExists=!/run/archiso/bootmnt
 ConditionPathExists=!/var/lib/mechos/firstboot.done
 
 [Service]

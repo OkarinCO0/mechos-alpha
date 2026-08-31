@@ -1,22 +1,24 @@
 # MechOS cloud ISO build
 
-This revision adds a GitHub Actions workflow that builds MechOS on a Fedora 44 userspace inside a privileged Linux runner.
+The `Build MechOS Arch ISO` workflow builds MechOS inside a privileged `archlinux:latest` container on an Ubuntu GitHub-hosted runner.
 
 ## Run it
 
-1. Put this folder in a GitHub repository.
-2. Open **Actions**.
-3. Select **Build MechOS ISO**.
-4. Choose **Run workflow**.
-5. When the run finishes, download the `MechOS-0.3.2-alpha-x86_64` artifact.
-6. Extract all parts into one folder and follow `REASSEMBLE.txt`.
+1. Open the repository's **Actions** page.
+2. Select **Build MechOS Arch ISO**.
+3. Choose **Run workflow**.
+4. Wait for validation, integration, ISO build and checksum verification to finish.
+5. Download the `MechOS-v0.3.0-alpha-x86_64` artifact.
+6. Extract `MechOS-Arch-Creator-x86_64.iso` and its `.sha256` file.
+7. Verify the checksum before testing the ISO.
 
-The workflow validates the project, builds the Fedora 44 KDE KIWI image, verifies its SHA-256 checksum, then splits the ISO into smaller parts for artifact transfer.
+## Workflow behavior
 
-## Why split the ISO
+- Static validation runs before package downloads or ArchISO work.
+- The cumulative MechOS integration patch is applied idempotently.
+- ArchISO runs in a privileged Docker container.
+- The ISO is checked against its SHA-256 file before upload.
+- Only one cloud ISO build runs at a time.
+- Artifacts are retained for seven days to reduce storage usage.
 
-A Fedora KDE live ISO is several gigabytes. Splitting it reduces the chance that a single huge artifact exceeds account storage/transfer limits. The final reassembled ISO is verified against the build-produced SHA-256 file.
-
-## Important
-
-This workflow still depends on GitHub's hosted runner allowing the privileged loop/mount operations KIWI needs. If GitHub changes hosted-runner privileges, use a Fedora 44 machine or a self-hosted Fedora runner instead.
+GitHub-hosted runners must continue to support privileged Docker and have enough disk space. If that changes, use a Linux host with Docker or a self-hosted runner.
