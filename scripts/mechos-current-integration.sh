@@ -16,6 +16,17 @@ fail() { printf '[MechOS v0.3.0] ERROR: %s\n' "$*" >&2; exit 1; }
 [ -d "$ROOT" ] || fail "ArchISO rootfs does not exist at $ROOT"
 mkdir -p "$BIN" "$APPS" "$AUTOSTART" "$SDDM"
 
+# The integration performs Python syntax validation on generated PyQt tools.
+# Install Arch's Python package if an older/custom builder did not bootstrap it.
+if ! command -v python3 >/dev/null 2>&1; then
+  log "python3 is missing in the build container; installing Arch package: python"
+  if command -v pacman >/dev/null 2>&1; then
+    pacman -S --needed --noconfirm python
+  fi
+fi
+
+command -v python3 >/dev/null 2>&1 || fail "python3 is required for GUI validation"
+
 # ---------------------------------------------------------------------------
 # Fixed Return to MechScope
 # ---------------------------------------------------------------------------

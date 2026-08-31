@@ -2,7 +2,7 @@
 set -euxo pipefail
 
 pacman -Syu --noconfirm
-pacman -S --noconfirm archiso git rsync sed grep coreutils findutils zstd
+pacman -S --noconfirm archiso git rsync sed grep coreutils findutils zstd python
 
 rm -rf /workspace/archlive /workspace/work
 cp -a /usr/share/archiso/configs/releng /workspace/archlive
@@ -1905,6 +1905,12 @@ sleep 2
 exec /usr/local/bin/mechos-live-setup
 EOF
 
+
+# Python is required by the cumulative integration's embedded GUI validators.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "[MechOS v0.3.0] ERROR: python3 missing after bootstrap package install." >&2
+  exit 66
+fi
 
 # MECHOS_CURRENT_INTEGRATION_EARLY
 # Apply the cumulative MechOS runtime/installer integration.
