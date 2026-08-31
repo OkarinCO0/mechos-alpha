@@ -251,18 +251,29 @@ chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-creator-app
 
 cat > /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode << "PYEOF"
 #!/usr/bin/env python3
-import os, shutil, subprocess, sys
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
 from pathlib import Path
+
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QPixmap
 from PyQt6.QtWidgets import (
- QApplication,QFrame,QGridLayout,QHBoxLayout,QLabel,QMainWindow,QMessageBox,
- QPushButton,QScrollArea,QStackedWidget,QVBoxLayout,QWidget
+    QApplication, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog,
+    QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
+    QScrollArea, QStackedWidget, QVBoxLayout, QWidget
 )
 
 LOGO="/usr/share/mechos/branding/mechos-logo.png"
 REF="/usr/share/mechos/branding/mechos-creator-mode-reference.png"
 APP="/usr/local/bin/mechos-creator-app"
+PROJECT_ROOT=Path.home()/"MechOS/Projects"
+ASSET_ROOT=Path.home()/"MechOS/Assets"
+CONFIG_DIR=Path.home()/".config/mechos"
+PRESET_FILE=CONFIG_DIR/"creator-preset.json"
 
 CATALOG=[
  ("Blender","blender","3D Modeling & Animation","native"),
@@ -300,8 +311,11 @@ QLabel#muted{color:#9d94a9}
 QLabel#metric{color:#d08cff;font-weight:700}
 QPushButton#nav{background:transparent;border:0;border-radius:8px;padding:11px;text-align:left;color:#d8d0df;font-weight:650}
 QPushButton#nav:checked,QPushButton#nav:hover{background:#6928b7;color:white}
-QPushButton#action{background:#351750;border:1px solid #704198;border-radius:7px;padding:7px 10px;color:#f0dfff;font-weight:650}
+QPushButton#action{background:#351750;border:1px solid #704198;border-radius:7px;padding:8px 11px;color:#f0dfff;font-weight:650}
 QPushButton#action:hover{background:#5a2381}
+QListWidget{background:#0b0d13;border:1px solid #2b2135;border-radius:8px}
+QListWidget::item{padding:8px}
+QListWidget::item:selected{background:#54227d}
 QScrollArea{border:0}
 """
 
@@ -314,6 +328,53 @@ def spawn(cmd):
     except Exception as e: QMessageBox.warning(None,"MechOS Creator Mode",str(e))
 
 def open_url(url): spawn(["xdg-open",url])
+
+def is_live():
+    return Path("/run/archiso/bootmnt").exists() or "archiso" in out(["bash","-lc","cat /proc/cmdline"])
+
+def vram_text():
+    if shutil.which("nvidia-smi"):
+        x=out(["nvidia-smi","--query-gpu=memory.used,memory.total","--format=csv,noheader,nounits"])
+        if x:
+            try:
+                u,t=[int(v.strip()) for v in x.splitlines()[0].split(",")]
+                return f"{u}/{t} MiB"
+            except: pass
+    return "N/A"
+
+def scan_projects():
+    PROJECT_ROOT.mkdir(parents=True,exist_ok=True)
+    candidates=[]
+    roots=[PROJECT_ROOT,Path.home()/"Projects"]
+    for base in roots:
+        if not base.exists(): continue
+        for p in base.iterdir():
+            if not p.is_dir(): continue
+            kind="Folder"
+            if list(p.glob("*.uproject")): kind="Unreal"
+            elif (p/"ProjectSettings/ProjectVersion.txt").exists(): kind="Unity"
+            elif list(p.glob("*.blend")): kind="Blender"
+            elif (p/"project.godot").exists(): kind="Godot"
+            try: mtime=p.stat().st_mtime
+            except: mtime=0
+            candidates.append((mtime,p,kind))
+    candidates.sort(reverse=True,key=lambda x:x[0])
+    return candidates[:30]
+
+def launch_project(path,kind):
+    p=Path(path)
+    if kind=="Unreal":
+        files=list(p.glob("*.uproject"))
+        if files: spawn(["xdg-open",str(files[0])]); return
+    if kind=="Unity":
+        if shutil.which("unityhub"): spawn(["unityhub","--","--projectPath",str(p)]); return
+        if shutil.which("flatpak"): spawn(["flatpak","run","com.unity.UnityHub"]); return
+    if kind=="Blender":
+        files=list(p.glob("*.blend"))
+        if files and shutil.which("blender"): spawn(["blender",str(files[0])]); return
+    if kind=="Godot" and shutil.which("godot"):
+        spawn(["godot","--editor","--path",str(p)]); return
+    spawn(["dolphin",str(p)])
 
 class AppCard(QFrame):
     def __init__(self,owner,info):
@@ -351,12 +412,22 @@ class AppCard(QFrame):
 class Creator(QMainWindow):
     def __init__(self):
         super().__init__(); self.cards=[]
-        self.setWindowTitle("MechOS Creator Mode"); self.resize(1560,960); self.setMinimumSize(1180,720); self.setStyleSheet(STYLE)
+        PROJECT_ROOT.mkdir(parents=True,exist_ok=True)
+        ASSET_ROOT.mkdir(parents=True,exist_ok=True)
+        CONFIG_DIR.mkdir(parents=True,exist_ok=True)
+        self.setWindowTitle("MechOS Creator Mode 2.0")
+        self.resize(1580,960); self.setMinimumSize(1180,720); self.setStyleSheet(STYLE)
         self.build()
         self.timer=QTimer(self); self.timer.timeout.connect(self.metrics); self.timer.start(2500); self.metrics()
 
     def panel(self,name="panel"):
         p=QFrame(); p.setObjectName(name); return p
+
+    def scroll(self):
+        s=QScrollArea(); s.setWidgetResizable(True); w=QWidget(); v=QVBoxLayout(w); v.setContentsMargins(20,16,20,20); s.setWidget(w); return s,v
+
+    def section(self,v,name):
+        l=QLabel(name); l.setObjectName("purple"); v.addWidget(l)
 
     def build(self):
         root=QWidget(); self.setCentralWidget(root)
@@ -366,26 +437,32 @@ class Creator(QMainWindow):
         if Path(LOGO).exists():
             lab=QLabel(); lab.setPixmap(QPixmap(LOGO).scaledToHeight(40,Qt.TransformationMode.SmoothTransformation)); tl.addWidget(lab)
         b=QLabel("MECHOS"); b.setObjectName("title"); tl.addWidget(b); tl.addStretch()
-        m=QLabel("CREATOR MODE"); m.setObjectName("purple"); m.setFont(QFont("Sans Serif",22,QFont.Weight.Bold)); tl.addWidget(m); tl.addStretch()
-        self.cpu=QLabel(); self.ram=QLabel(); self.disk=QLabel()
-        for x in (self.cpu,self.ram,self.disk): x.setObjectName("metric"); tl.addWidget(x)
+        m=QLabel("CREATOR MODE 2.0"); m.setObjectName("purple"); m.setFont(QFont("Sans Serif",22,QFont.Weight.Bold)); tl.addWidget(m); tl.addStretch()
+        self.cpu=QLabel(); self.ram=QLabel(); self.vram=QLabel(); self.disk=QLabel()
+        for x in (self.cpu,self.ram,self.vram,self.disk): x.setObjectName("metric"); tl.addWidget(x)
         outer.addWidget(top)
 
         body=QHBoxLayout(); body.setSpacing(0)
-        side=self.panel("sidebar"); side.setFixedWidth(205); sl=QVBoxLayout(side)
+        side=self.panel("sidebar"); side.setFixedWidth(215); sl=QVBoxLayout(side)
         self.stack=QStackedWidget(); self.nav=[]
         pages=[
-          ("⌂  Dashboard",self.dashboard),("▣  Projects",self.projects),
+          ("⌂  Dashboard",self.dashboard),
+          ("▣  Projects",self.projects),
           ("⬡  Engines",lambda:self.catalog("GAME ENGINES",["unityhub","unreal","godot","vscode","gitkraken"])),
           ("⚒  Tools",lambda:self.catalog("CREATOR TOOLS",["blender","krita","obs","kdenlive","audacity","lmms","vscode","gitkraken"])),
-          ("▧  Assets",self.assets),("✦  MechClip AI",self.mechclip),
-          ("◈  Learn",self.learn),("⚙  Settings",self.settings)
+          ("▧  Assets",self.assets),
+          ("✦  MechClip AI",self.mechclip),
+          ("◈  Learn",self.learn),
+          ("◎  Community",self.community),
+          ("⚙  Settings",self.settings)
         ]
         for i,(name,fn) in enumerate(pages):
             btn=QPushButton(name); btn.setObjectName("nav"); btn.setCheckable(True); btn.clicked.connect(lambda _,j=i:self.select(j)); sl.addWidget(btn); self.nav.append(btn); self.stack.addWidget(fn())
         sl.addStretch()
         stat=self.panel(); st=QVBoxLayout(stat); ss=QLabel("SYSTEM STATUS"); ss.setObjectName("purple"); st.addWidget(ss)
-        self.status=QLabel(); self.status.setObjectName("muted"); self.status.setWordWrap(True); st.addWidget(self.status); sl.addWidget(stat)
+        self.status=QLabel(); self.status.setObjectName("muted"); self.status.setWordWrap(True); st.addWidget(self.status)
+        mon=QPushButton("System Monitor"); mon.setObjectName("action"); mon.clicked.connect(lambda:spawn(["/usr/local/bin/mechos-performance-center"])); st.addWidget(mon)
+        sl.addWidget(stat)
         body.addWidget(side); body.addWidget(self.stack,1); outer.addLayout(body,1)
 
         bottom=self.panel("bottom"); bl=QHBoxLayout(bottom); bl.addWidget(QLabel("MECHOS")); bl.addStretch()
@@ -393,18 +470,16 @@ class Creator(QMainWindow):
             btn=QPushButton(name); btn.setObjectName("action"); btn.clicked.connect(fn); bl.addWidget(btn)
         bl.addStretch(); outer.addWidget(bottom); self.select(0)
 
-    def scroll(self):
-        s=QScrollArea(); s.setWidgetResizable(True); w=QWidget(); v=QVBoxLayout(w); v.setContentsMargins(20,16,20,20); s.setWidget(w); return s,v
-
-    def section(self,v,name):
-        l=QLabel(name); l.setObjectName("purple"); v.addWidget(l)
-
     def dashboard(self):
         s,v=self.scroll()
         hero=self.panel(); h=QHBoxLayout(hero); tx=QVBoxLayout()
         a=QLabel("WELCOME TO"); a.setObjectName("purple"); tx.addWidget(a)
         t=QLabel("CREATOR MODE"); t.setObjectName("title"); tx.addWidget(t)
-        d=QLabel("Build worlds, avatars, games, video and streaming projects with one-click creator tooling and compatibility runtimes."); d.setObjectName("muted"); d.setWordWrap(True); tx.addWidget(d); tx.addStretch()
+        d=QLabel("Build worlds, avatars, games, video and streaming projects with one-click creator tools, projects, assets and compatibility runtimes."); d.setObjectName("muted"); d.setWordWrap(True); tx.addWidget(d)
+        hero_buttons=QHBoxLayout()
+        for name,fn in [("New Project",self.new_project),("Open Project",self.open_project_picker),("What's New",lambda:spawn(["/usr/local/bin/mechos-update-center"]))]:
+            b=QPushButton(name); b.setObjectName("action"); b.clicked.connect(fn); hero_buttons.addWidget(b)
+        tx.addLayout(hero_buttons); tx.addStretch()
         h.addLayout(tx,2)
         if Path(REF).exists():
             art=QLabel(); art.setPixmap(QPixmap(REF).scaled(560,260,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation)); art.setAlignment(Qt.AlignmentFlag.AlignCenter); h.addWidget(art,3)
@@ -412,50 +487,110 @@ class Creator(QMainWindow):
 
         self.section(v,"QUICK LAUNCH")
         q=QGridLayout()
-        quick=["blender","unityhub","unreal","vrchat","vscode","gitkraken","krita","obs"]
-        for i,appid in enumerate(quick):
+        for i,appid in enumerate(["blender","unityhub","unreal","vrchat","vscode","gitkraken","krita","obs","lutris","heroic","steam","protonupqt"]):
             info=next(x for x in CATALOG if x[1]==appid)
-            btn=QPushButton(info[0]); btn.setObjectName("action"); btn.clicked.connect(lambda _,a=appid:self.quick(a)); q.addWidget(btn,i//8,i%8)
+            btn=QPushButton(info[0]); btn.setObjectName("action"); btn.clicked.connect(lambda _,a=appid:self.quick(a)); q.addWidget(btn,i//6,i%6)
         v.addLayout(q)
+
+        row=QHBoxLayout()
+        recent=self.panel(); rl=QVBoxLayout(recent); rt=QLabel("RECENT PROJECTS"); rt.setObjectName("purple"); rl.addWidget(rt)
+        projects=scan_projects()[:5]
+        if projects:
+            for m,p,k in projects:
+                b=QPushButton(f"{p.name}   •   {k}"); b.setObjectName("action"); b.clicked.connect(lambda _,pp=p,kk=k:launch_project(pp,kk)); rl.addWidget(b)
+        else:
+            none=QLabel("No projects yet."); none.setObjectName("muted"); rl.addWidget(none)
+        pm=QPushButton("Open Project Manager"); pm.setObjectName("action"); pm.clicked.connect(lambda:self.select(1)); rl.addWidget(pm)
+        row.addWidget(recent,2)
+
+        presets=self.panel(); pl=QVBoxLayout(presets); pt=QLabel("CREATOR MODE PRESETS"); pt.setObjectName("purple"); pl.addWidget(pt)
+        for name in ["Game Dev","VRChat Creator","3D Artist","Streaming"]:
+            b=QPushButton(name); b.setObjectName("action"); b.clicked.connect(lambda _,n=name:self.apply_preset(n)); pl.addWidget(b)
+        row.addWidget(presets,1)
+
+        news=self.panel(); nl=QVBoxLayout(news); nt=QLabel("NEWS & UPDATES"); nt.setObjectName("purple"); nl.addWidget(nt)
+        release=Path("/etc/mechos-release")
+        rtxt=release.read_text(errors="ignore") if release.exists() else "MechOS Alpha"
+        lab=QLabel("Current system:\n"+rtxt[:240]); lab.setObjectName("muted"); lab.setWordWrap(True); nl.addWidget(lab)
+        ub=QPushButton("Open Update Center"); ub.setObjectName("action"); ub.clicked.connect(lambda:spawn(["/usr/local/bin/mechos-update-center"])); nl.addWidget(ub)
+        row.addWidget(news,1)
+        v.addLayout(row)
 
         self.section(v,"1-CLICK INSTALL & COMPATIBILITY")
         g=QGridLayout()
         for i,appid in enumerate(["steam","lutris","heroic","protonupqt","wine","winetricks","bottles","discord"]):
             info=next(x for x in CATALOG if x[1]==appid); c=AppCard(self,info); self.cards.append(c); g.addWidget(c,i//4,i%4)
         v.addLayout(g)
-
-        self.section(v,"CREATOR PROGRAMS")
-        g2=QGridLayout()
-        for i,info in enumerate(CATALOG[:12]):
-            c=AppCard(self,info); self.cards.append(c); g2.addWidget(c,i//4,i%4)
-        v.addLayout(g2)
-
-        p=self.panel(); pl=QVBoxLayout(p); title=QLabel("WINDOWS CREATOR APP COMPATIBILITY"); title.setObjectName("purple"); pl.addWidget(title)
-        note=QLabel("Use a dedicated MechOS Wine prefix to run a legitimate Windows installer you already have. Vendor sign-in and licensing still apply."); note.setObjectName("muted"); note.setWordWrap(True); pl.addWidget(note)
-        b=QPushButton("Run Windows Creator Installer"); b.setObjectName("action"); b.clicked.connect(lambda:spawn([APP,"windows-installer"])); pl.addWidget(b); v.addWidget(p)
         v.addStretch(); return s
 
-    def simple(self,title,buttons):
-        s,v=self.scroll(); self.section(v,title)
-        for name,fn in buttons:
-            b=QPushButton(name); b.setObjectName("action"); b.clicked.connect(fn); v.addWidget(b)
-        v.addStretch(); return s
+    def new_project(self):
+        name,ok=QInputDialog.getText(self,"New Project","Project name:")
+        if not ok or not name.strip(): return
+        safe="".join(c for c in name.strip() if c.isalnum() or c in " _-").strip()
+        if not safe: return
+        kind,ok=QInputDialog.getItem(self,"Project Template","Template:",["Generic","Unreal","Unity","Godot","Blender","VRChat"],0,False)
+        if not ok:return
+        p=PROJECT_ROOT/safe
+        if p.exists():
+            QMessageBox.warning(self,"MechOS Creator","That project already exists.");return
+        p.mkdir(parents=True)
+        meta={"name":safe,"template":kind,"created":int(time.time())}
+        (p/".mechos-project.json").write_text(json.dumps(meta,indent=2))
+        if kind=="Godot": (p/"project.godot").write_text('[application]\nconfig/name="'+safe+'"\n')
+        elif kind=="Unity": (p/"ProjectSettings").mkdir(); (p/"Assets").mkdir(); (p/"ProjectSettings/ProjectVersion.txt").write_text("m_EditorVersion: configure-with-Unity-Hub\n")
+        elif kind=="Unreal": (p/(safe+".uproject")).write_text('{"FileVersion":3,"EngineAssociation":"","Category":"","Description":"MechOS project"}\n')
+        elif kind=="Blender": pass
+        elif kind=="VRChat": (p/"README.txt").write_text("Open Unity Hub, create/open a supported Unity project here, then follow VRChat Creator documentation.\n")
+        QMessageBox.information(self,"MechOS Creator",f"Created {kind} project:\n{p}")
+        launch_project(p,kind)
+
+    def open_project_picker(self):
+        path=QFileDialog.getExistingDirectory(self,"Open Creator Project",str(PROJECT_ROOT))
+        if path: launch_project(Path(path),"Folder")
 
     def projects(self):
-        base=Path.home()/ "MechOS/Projects"
-        return self.simple("PROJECTS",[("Open Projects",lambda:spawn(["dolphin",str(base)])),("New Project Folder",lambda:spawn(["dolphin",str(base)]))])
+        s,v=self.scroll(); self.section(v,"PROJECT MANAGER")
+        top=QHBoxLayout()
+        for name,fn in [("New Project",self.new_project),("Open Folder",self.open_project_picker),("Projects Directory",lambda:spawn(["dolphin",str(PROJECT_ROOT)]))]:
+            b=QPushButton(name); b.setObjectName("action"); b.clicked.connect(fn); top.addWidget(b)
+        v.addLayout(top)
+        lst=QListWidget()
+        projects=scan_projects()
+        for m,p,k in projects:
+            item=QListWidgetItem(f"{p.name}   [{k}]   {time.strftime('%Y-%m-%d %H:%M',time.localtime(m))}")
+            item.setData(Qt.ItemDataRole.UserRole,(str(p),k)); lst.addItem(item)
+        lst.itemDoubleClicked.connect(lambda it: launch_project(*it.data(Qt.ItemDataRole.UserRole)))
+        v.addWidget(lst,1)
+        openb=QPushButton("Open Selected Project"); openb.setObjectName("action")
+        def open_selected():
+            it=lst.currentItem()
+            if it: launch_project(*it.data(Qt.ItemDataRole.UserRole))
+        openb.clicked.connect(open_selected); v.addWidget(openb)
+        return s
 
     def assets(self):
-        return self.simple("ASSETS",[("Assets Folder",lambda:spawn(["dolphin",str(Path.home()/"MechOS/Assets")])),("Exports Folder",lambda:spawn(["dolphin",str(Path.home()/"MechOS/Exports")]))])
-
-    def mechclip(self):
-        return self.simple("MECHCLIP AI",[("Launch MechClip",self.open_mechclip),("OBS Studio",lambda:self.quick("obs")),("Kdenlive",lambda:self.quick("kdenlive"))])
-
-    def learn(self):
-        return self.simple("LEARN",[("Blender Manual",lambda:open_url("https://docs.blender.org/manual/en/latest/")),("Unity Manual",lambda:open_url("https://docs.unity3d.com/")),("Unreal Docs",lambda:open_url("https://dev.epicgames.com/documentation/")),("VRChat Creator Docs",lambda:open_url("https://creators.vrchat.com/"))])
-
-    def settings(self):
-        return self.simple("SETTINGS",[("System Settings",lambda:spawn(["systemsettings"])),("Performance Center",lambda:spawn(["/usr/local/bin/mechos-performance-center"])),("Update Center",lambda:spawn(["/usr/local/bin/mechos-update-center"])),("Creator Setup",lambda:spawn(["/usr/local/bin/mechos-creator-setup"]))])
+        s,v=self.scroll(); self.section(v,"ASSET BROWSER")
+        bar=QHBoxLayout()
+        imp=QPushButton("Import Files"); imp.setObjectName("action")
+        def import_files():
+            files,_=QFileDialog.getOpenFileNames(self,"Import Creator Assets",str(Path.home()))
+            for f in files:
+                try: shutil.copy2(f,ASSET_ROOT/Path(f).name)
+                except Exception as e: QMessageBox.warning(self,"Asset Import",str(e))
+            refresh()
+        imp.clicked.connect(import_files); bar.addWidget(imp)
+        folder=QPushButton("Open Assets Folder"); folder.setObjectName("action"); folder.clicked.connect(lambda:spawn(["dolphin",str(ASSET_ROOT)])); bar.addWidget(folder)
+        v.addLayout(bar)
+        lst=QListWidget()
+        def refresh():
+            lst.clear()
+            for p in sorted(ASSET_ROOT.rglob("*")):
+                if p.is_file():
+                    lst.addItem(str(p.relative_to(ASSET_ROOT)))
+        refresh()
+        lst.itemDoubleClicked.connect(lambda it:spawn(["xdg-open",str(ASSET_ROOT/it.text())]))
+        v.addWidget(lst,1)
+        return s
 
     def catalog(self,title,ids):
         s,v=self.scroll(); self.section(v,title); g=QGridLayout()
@@ -463,15 +598,61 @@ class Creator(QMainWindow):
             info=next(x for x in CATALOG if x[1]==appid); c=AppCard(self,info); self.cards.append(c); g.addWidget(c,i//3,i%3)
         v.addLayout(g); v.addStretch(); return s
 
+    def mechclip(self):
+        s,v=self.scroll(); self.section(v,"MECHCLIP AI")
+        note=QLabel("MechClip launches when installed. OBS and Kdenlive are available below for capture/editing."); note.setObjectName("muted"); note.setWordWrap(True); v.addWidget(note)
+        b=QPushButton("Launch MechClip"); b.setObjectName("action"); b.clicked.connect(self.open_mechclip); v.addWidget(b)
+        for appid in ["obs","kdenlive"]:
+            info=next(x for x in CATALOG if x[1]==appid); c=AppCard(self,info); self.cards.append(c); v.addWidget(c)
+        v.addStretch(); return s
+
+    def learn(self):
+        s,v=self.scroll(); self.section(v,"LEARN")
+        for name,url in [
+            ("Blender Manual","https://docs.blender.org/manual/en/latest/"),
+            ("Unity Manual","https://docs.unity3d.com/"),
+            ("Unreal Documentation","https://dev.epicgames.com/documentation/"),
+            ("VRChat Creator Docs","https://creators.vrchat.com/"),
+            ("Godot Docs","https://docs.godotengine.org/"),
+        ]:
+            b=QPushButton(name); b.setObjectName("action"); b.clicked.connect(lambda _,u=url:open_url(u)); v.addWidget(b)
+        v.addStretch(); return s
+
+    def community(self):
+        s,v=self.scroll(); self.section(v,"COMMUNITY")
+        for name,url in [("Discord", "https://discord.com/"),("GitHub", "https://github.com/"),("VRChat Creators","https://creators.vrchat.com/")]:
+            b=QPushButton(name); b.setObjectName("action"); b.clicked.connect(lambda _,u=url:open_url(u)); v.addWidget(b)
+        v.addStretch(); return s
+
+    def settings(self):
+        s,v=self.scroll(); self.section(v,"CREATOR SETTINGS")
+        for name,cmd in [
+            ("System Settings",["systemsettings"]),
+            ("Performance Center",["/usr/local/bin/mechos-performance-center"]),
+            ("Update Center",["/usr/local/bin/mechos-update-center"]),
+            ("Creator Folder Setup",["/usr/local/bin/mechos-creator-setup"]),
+            ("Windows Creator Installer",[APP,"windows-installer"]),
+        ]:
+            b=QPushButton(name); b.setObjectName("action"); b.clicked.connect(lambda _,c=cmd:spawn(c)); v.addWidget(b)
+        v.addStretch(); return s
+
     def select(self,i):
         self.stack.setCurrentIndex(i)
         for j,b in enumerate(self.nav): b.setChecked(i==j)
 
-    def live(self):
-        return Path("/run/archiso/bootmnt").exists() or "archiso" in out(["bash","-lc","cat /proc/cmdline"])
+    def apply_preset(self,name):
+        data={"preset":name,"updated":int(time.time())}
+        PRESET_FILE.write_text(json.dumps(data,indent=2))
+        profile="balanced"
+        if name in ("Game Dev","3D Artist"): profile="performance"
+        elif name=="Streaming": profile="balanced"
+        elif name=="VRChat Creator": profile="performance"
+        if shutil.which("powerprofilesctl"):
+            subprocess.run(["powerprofilesctl","set",profile],check=False)
+        QMessageBox.information(self,"Creator Preset",f"{name} preset activated.\nPower profile: {profile}")
 
     def install(self,card):
-        if self.live():
+        if is_live():
             QMessageBox.information(self,"MechOS Live Desktop","One-click app installs are disabled in the disposable Live session. Install MechOS first so Creator apps persist.")
             return
         if QMessageBox.question(self,"Install Creator App",f"Install {card.info[0]}?")!=QMessageBox.StandardButton.Yes:return
@@ -491,7 +672,7 @@ class Creator(QMainWindow):
             temp=AppCard(self,info); self.install(temp)
 
     def vrchat(self):
-        QMessageBox.information(self,"VRChat Creator","VRChat's official Creator Companion workflow remains Windows-focused. MechOS provides Unity Hub and Linux creator tooling without pretending unsupported VCC behavior is native.")
+        QMessageBox.information(self,"VRChat Creator","MechOS provides Unity Hub and creator tooling, but does not claim unsupported native VRChat Creator Companion behavior. The supported SDK workflow remains linked below.")
         open_url("https://creators.vrchat.com/")
 
     def open_mechclip(self):
@@ -502,16 +683,20 @@ class Creator(QMainWindow):
     def metrics(self):
         self.cpu.setText("CPU "+(out(["bash","-lc","top -bn1 | awk '/Cpu\\(s\\)/ {printf \"%.0f%%\",100-$8;exit}'"]) or "?"))
         self.ram.setText("RAM "+(out(["bash","-lc","free | awk '/Mem:/ {printf \"%.0f%%\",($3/$2)*100}'"]) or "?"))
+        self.vram.setText("VRAM "+vram_text())
         self.disk.setText("DISK "+(out(["bash","-lc","df -h / | awk 'NR==2 {print $5}'"]) or "?"))
         gpu=out(["bash","-lc","lspci | grep -Ei 'VGA|3D|Display' | sed 's/^[^ ]* //' | head -n1"]) or "Unknown GPU"
-        self.status.setText("OS\\nMechOS Arch\\n\\nGPU\\n"+gpu[:48]+"\\n\\nMode\\nCreator")
+        preset="None"
+        try: preset=json.loads(PRESET_FILE.read_text()).get("preset","None")
+        except: pass
+        self.status.setText("OS\\nMechOS Arch\\n\\nGPU\\n"+gpu[:48]+"\\n\\nPreset\\n"+preset)
 
     def mechscope(self):
         spawn(["/usr/local/bin/mechos-return-to-mechscope"]); QApplication.quit()
 
     def desktop(self): QApplication.quit()
 
-app=QApplication(sys.argv); app.setApplicationName("MechOS Creator Mode")
+app=QApplication(sys.argv); app.setApplicationName("MechOS Creator Mode 2.0")
 w=Creator(); w.showMaximized(); sys.exit(app.exec())
 PYEOF
 chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
@@ -1709,14 +1894,21 @@ if ! { [ -e /run/archiso/bootmnt ] || grep -q 'archiso' /proc/cmdline 2>/dev/nul
   exit 0
 fi
 
-# Normal Live boot is strictly KDE Plasma Desktop.
-# Only the dedicated recovery boot entry auto-opens a MechOS tool.
+# KDE Plasma is the Live ISO desktop. The branded setup window is launched
+# on top of Plasma after login; closing it leaves a completely usable desktop.
 if grep -q 'mechos.recovery=1' /proc/cmdline 2>/dev/null; then
   exec /usr/local/bin/mechos-recovery-center
 fi
 
-exit 0
+# Give Plasma a moment to finish panel/compositor startup.
+sleep 2
+exec /usr/local/bin/mechos-live-setup
 EOF
+
+
+# MECHOS_CURRENT_INTEGRATION_EARLY
+# Apply the cumulative MechOS runtime/installer integration.
+bash /workspace/scripts/mechos-current-integration.sh early
 
 cat > /workspace/archlive/airootfs/usr/local/bin/mechos-install << "EOF"
 #!/usr/bin/env bash
@@ -2802,28 +2994,47 @@ ScriptFile=/usr/share/plymouth/themes/mechos/mechos.script
 EOF
 
 cat > /workspace/archlive/airootfs/usr/share/plymouth/themes/mechos/mechos.script << "EOF"
-Window.SetBackgroundTopColor(0.025, 0.012, 0.045);
-Window.SetBackgroundBottomColor(0.080, 0.018, 0.120);
+# MechOS v0.3 dynamic boot theme.
+# The visual direction matches the blue/purple Installer and Creator Mode.
+
+Window.SetBackgroundTopColor(0.010, 0.018, 0.045);
+Window.SetBackgroundBottomColor(0.030, 0.008, 0.065);
 
 logo.image = Image("mechos-logo.png");
 logo.sprite = Sprite(logo.image);
 logo.sprite.SetX(Window.GetWidth() / 2 - logo.image.GetWidth() / 2);
-logo.sprite.SetY(Window.GetHeight() / 2 - logo.image.GetHeight() / 2 - 30);
+logo.sprite.SetY(Window.GetHeight() / 2 - logo.image.GetHeight() / 2 - 85);
 
-bar_bg.image = Image.Text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 0.22, 0.12, 0.30);
-bar_bg.sprite = Sprite(bar_bg.image);
-bar_bg.sprite.SetX(Window.GetWidth() / 2 - bar_bg.image.GetWidth() / 2);
-bar_bg.sprite.SetY(Window.GetHeight() / 2 + 170);
+title.image = Image.Text("MECHOS", 0.92, 0.95, 1.00);
+title.sprite = Sprite(title.image);
+title.sprite.SetX(Window.GetWidth() / 2 - title.image.GetWidth() / 2);
+title.sprite.SetY(Window.GetHeight() / 2 + 105);
 
-status.image = Image.Text("Starting MechScope", 0.75, 0.55, 0.95);
+tag.image = Image.Text("GAMING  +  CREATOR  OS", 0.12, 0.72, 1.00);
+tag.sprite = Sprite(tag.image);
+tag.sprite.SetX(Window.GetWidth() / 2 - tag.image.GetWidth() / 2);
+tag.sprite.SetY(Window.GetHeight() / 2 + 145);
+
+scope.image = Image.Text("MECHSCOPE 2.0", 0.72, 0.38, 1.00);
+scope.sprite = Sprite(scope.image);
+scope.sprite.SetX(Window.GetWidth() / 2 - scope.image.GetWidth() / 2);
+scope.sprite.SetY(Window.GetHeight() / 2 + 180);
+
+status.image = Image.Text("Initializing MechOS", 0.74, 0.63, 0.94);
 status.sprite = Sprite(status.image);
 status.sprite.SetX(Window.GetWidth() / 2 - status.image.GetWidth() / 2);
-status.sprite.SetY(Window.GetHeight() / 2 + 210);
+status.sprite.SetY(Window.GetHeight() / 2 + 230);
+
+phase.image = Image.Text("Hardware check   •   System init   •   Drivers   •   Services", 0.34, 0.58, 0.86);
+phase.sprite = Sprite(phase.image);
+phase.sprite.SetX(Window.GetWidth() / 2 - phase.image.GetWidth() / 2);
+phase.sprite.SetY(Window.GetHeight() / 2 + 265);
 
 fun refresh_callback () {
     progress = Plymouth.GetBootProgress();
-    opacity = 0.55 + (progress * 0.45);
-    logo.sprite.SetOpacity(opacity);
+    pulse = 0.65 + (progress * 0.35);
+    logo.sprite.SetOpacity(pulse);
+    title.sprite.SetOpacity(0.75 + (progress * 0.25));
 }
 Plymouth.SetRefreshFunction(refresh_callback);
 EOF
@@ -2892,15 +3103,20 @@ cp /workspace/archlive/airootfs/usr/share/mechos/branding/mechos-logo.png \
 # not a separate desktop-only utility.
 cat > /workspace/archlive/airootfs/usr/local/bin/mechscope << "PYEOF"
 #!/usr/bin/env python3
+import glob
 import os
+import re
+import shutil
 import subprocess
 import sys
+import time
+from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont, QKeyEvent
+from PyQt6.QtGui import QFont, QKeyEvent, QPixmap
 from PyQt6.QtWidgets import (
-    QApplication, QLabel, QMainWindow, QPushButton,
-    QVBoxLayout, QHBoxLayout, QWidget
+    QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
+    QMessageBox, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 )
 
 try:
@@ -2912,189 +3128,496 @@ except Exception:
 MODE_FILE = f"/tmp/mechos-next-mode-{os.getuid()}"
 FALLBACK = os.environ.get("MECHOS_GAMING_FALLBACK") == "1"
 
+STYLE = """
+QWidget { background:#060914; color:#f3f7ff; font-family:Sans Serif; }
+QFrame#top, QFrame#bottom {
+    background:#080d1a; border:1px solid #162945;
+}
+QFrame#panel {
+    background:#091122; border:1px solid #1c3352; border-radius:12px;
+}
+QFrame#hero {
+    background:#0a1428; border:1px solid #275184; border-radius:14px;
+}
+QFrame#gameCard {
+    background:#0b1321; border:1px solid #243552; border-radius:10px;
+}
+QFrame#gameCard:focus, QFrame#gameCard:hover {
+    border:2px solid #7a54ff;
+}
+QLabel#brand { font-size:28px; font-weight:900; color:#f7f9ff; }
+QLabel#scope { font-size:26px; font-weight:900; color:#b86cff; }
+QLabel#section { color:#8fd8ff; font-size:14px; font-weight:800; }
+QLabel#muted { color:#8fa0bb; }
+QLabel#metric { color:#caa6ff; font-weight:700; }
+QPushButton {
+    background:#101a2b; border:1px solid #274566; border-radius:9px;
+    padding:10px 13px; color:#eef6ff; font-weight:650;
+}
+QPushButton:hover, QPushButton:focus {
+    background:#172a46; border:2px solid #6b7cff;
+}
+QPushButton#primary {
+    background:#6425b8; border:1px solid #9d6cff; color:white;
+}
+QPushButton#mode {
+    background:#0d1728; border:1px solid #293e60; text-align:center;
+}
+QPushButton#mode:focus, QPushButton#mode:hover {
+    background:#432061; border:2px solid #a867ff;
+}
+QScrollArea { border:0; }
+"""
+
+def output(cmd):
+    try:
+        return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        return ""
+
+def spawn(cmd):
+    try:
+        return subprocess.Popen(cmd)
+    except Exception:
+        return None
+
 def write_mode(mode):
     try:
-        with open(MODE_FILE, "w", encoding="utf-8") as f:
-            f.write(mode + "\n")
+        Path(MODE_FILE).write_text(mode + "\n")
     except Exception:
         pass
+
+def steam_roots():
+    roots = []
+    for p in [
+        Path.home()/".local/share/Steam",
+        Path.home()/".steam/steam",
+        Path.home()/".var/app/com.valvesoftware.Steam/.local/share/Steam",
+    ]:
+        if p.exists():
+            roots.append(p)
+    expanded = list(roots)
+    for root in roots:
+        vdf = root/"steamapps/libraryfolders.vdf"
+        if not vdf.exists():
+            continue
+        try:
+            data = vdf.read_text(errors="ignore")
+            for raw in re.findall(r'"path"\s+"([^"]+)"', data):
+                path = Path(raw.replace("\\\\","/"))
+                if path.exists() and path not in expanded:
+                    expanded.append(path)
+        except Exception:
+            pass
+    return expanded
+
+def steam_games():
+    games = []
+    seen = set()
+    last_played = {}
+    for root in steam_roots():
+        # Best-effort last-played extraction from localconfig.
+        for cfg in root.glob("userdata/*/config/localconfig.vdf"):
+            try:
+                data = cfg.read_text(errors="ignore")
+                for appid, ts in re.findall(r'"(\d+)"\s*\{[^{}]*?"LastPlayed"\s+"(\d+)"', data, re.S):
+                    last_played[appid] = max(int(ts), last_played.get(appid, 0))
+            except Exception:
+                pass
+
+    for root in steam_roots():
+        appdir = root/"steamapps"
+        for manifest in appdir.glob("appmanifest_*.acf"):
+            try:
+                data = manifest.read_text(errors="ignore")
+                appid_m = re.search(r'"appid"\s+"(\d+)"', data)
+                name_m = re.search(r'"name"\s+"([^"]+)"', data)
+                if not appid_m or not name_m:
+                    continue
+                appid = appid_m.group(1)
+                if appid in seen:
+                    continue
+                seen.add(appid)
+                name = name_m.group(1)
+                art = ""
+                candidates = [
+                    root/f"appcache/librarycache/{appid}_library_600x900.jpg",
+                    root/f"appcache/librarycache/{appid}_library_600x900.png",
+                    root/f"appcache/librarycache/{appid}_header.jpg",
+                ]
+                for c in candidates:
+                    if c.exists():
+                        art = str(c)
+                        break
+                games.append({
+                    "appid": appid,
+                    "name": name,
+                    "art": art,
+                    "last": last_played.get(appid, int(manifest.stat().st_mtime)),
+                })
+            except Exception:
+                pass
+    games.sort(key=lambda x: x["last"], reverse=True)
+    return games
+
+def cpu_percent():
+    line = output(["bash","-lc","top -bn1 | awk '/Cpu\\(s\\)/ {printf \"%.0f\",100-$8;exit}'"])
+    return line or "?"
+
+def ram_percent():
+    return output(["bash","-lc","free | awk '/Mem:/ {printf \"%.0f\",($3/$2)*100}'"]) or "?"
+
+def disk_percent():
+    return output(["bash","-lc","df / | awk 'NR==2 {gsub(/%/,\"\",$5); print $5}'"]) or "?"
+
+def gpu_name():
+    return output(["bash","-lc","lspci | grep -Ei 'VGA|3D|Display' | sed 's/^[^ ]* //' | head -n1"]) or "Unknown GPU"
+
+def network_name():
+    return output(["bash","-lc","nmcli -t -f NAME connection show --active 2>/dev/null | head -n1"]) or "Offline"
+
+class GameButton(QPushButton):
+    def __init__(self, game, launch_cb):
+        super().__init__()
+        self.game = game
+        self.setMinimumSize(150, 190)
+        self.setMaximumWidth(190)
+        self.setText(game["name"])
+        self.setStyleSheet("""
+            QPushButton {
+              text-align:center; padding:10px; background:#0b1321;
+              border:1px solid #263a5a; border-radius:11px;
+              font-size:13px; font-weight:700;
+            }
+            QPushButton:hover, QPushButton:focus {
+              background:#152743; border:2px solid #7b5bff;
+            }
+        """)
+        if game.get("art"):
+            pm = QPixmap(game["art"])
+            if not pm.isNull():
+                self.setIcon(pm)
+                self.setIconSize(pm.scaled(125,145,Qt.AspectRatioMode.KeepAspectRatio,
+                                           Qt.TransformationMode.SmoothTransformation).size())
+        self.clicked.connect(lambda: launch_cb(game))
 
 class MechScope(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.steam = None
-        self.buttons = []
-        self.index = 0
-        self.setWindowTitle("MechScope")
+        self.setWindowTitle("MechScope 2.0")
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
-        self.setStyleSheet("""
-            QMainWindow, QWidget {
-                background-color: #0c0715;
-                color: white;
-            }
-            QLabel#title {
-                color: #c78cff;
-                font-size: 42px;
-                font-weight: 800;
-            }
-            QLabel#subtitle {
-                color: #b8b2c8;
-                font-size: 16px;
-            }
-            QPushButton {
-                background-color: #21152f;
-                border: 2px solid #4a3268;
-                border-radius: 16px;
-                padding: 18px 24px;
-                text-align: left;
-                color: white;
-                font-size: 22px;
-                font-weight: 650;
-            }
-            QPushButton:focus {
-                background-color: #44245f;
-                border: 3px solid #cc8cff;
-            }
-            QPushButton:hover {
-                background-color: #352047;
-            }
-            QLabel#hint {
-                color: #8d849d;
-                font-size: 14px;
-            }
-        """)
+        self.setStyleSheet(STYLE)
+        self.games = steam_games()
+        self.focusables = []
+        self.focus_index = 0
+        self.gamepad = None
+        self.last_pad_count = -1
+        self.build_ui()
+        self.setup_gamepad()
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.tick)
+        self.timer.start(500)
+        self.clock_timer = QTimer(self)
+        self.clock_timer.timeout.connect(self.refresh_stats)
+        self.clock_timer.start(2000)
+        self.refresh_stats()
 
+    def panel(self, name="panel"):
+        p = QFrame()
+        p.setObjectName(name)
+        return p
+
+    def focus_button(self, b):
+        self.focusables.append(b)
+        return b
+
+    def build_ui(self):
         root = QWidget()
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(70, 55, 70, 45)
-        outer.setSpacing(16)
+        outer.setContentsMargins(0,0,0,0)
+        outer.setSpacing(0)
 
-        title = QLabel("MECHSCOPE")
-        title.setObjectName("title")
-        outer.addWidget(title)
+        top = self.panel("top")
+        tl = QHBoxLayout(top)
+        tl.setContentsMargins(18,9,18,9)
+        brand = QLabel("MECHOS")
+        brand.setObjectName("brand")
+        tl.addWidget(brand)
+        tl.addStretch()
+        scope = QLabel("MECHSCOPE 2.0")
+        scope.setObjectName("scope")
+        tl.addWidget(scope)
+        tl.addStretch()
+        self.net_label = QLabel()
+        self.net_label.setObjectName("metric")
+        tl.addWidget(self.net_label)
+        self.time_label = QLabel()
+        self.time_label.setObjectName("metric")
+        tl.addWidget(self.time_label)
+        outer.addWidget(top)
 
-        subtitle = QLabel("MechOS Gaming Shell  •  Library  •  Modes  •  Power")
-        subtitle.setObjectName("subtitle")
-        outer.addWidget(subtitle)
-        outer.addSpacing(22)
+        body = QHBoxLayout()
+        body.setContentsMargins(18,14,18,14)
+        body.setSpacing(14)
 
-        self.add_button("🎮  Steam Library", self.open_steam)
-        self.add_button("🖥  Desktop Mode", lambda: self.switch_mode("desktop"))
-        self.add_button("🛠  Creator Mode", lambda: self.switch_mode("creator"))
-        self.add_button("⚡  Performance Center", self.open_performance)
-        self.add_button("🔄  Update Center", self.open_updates)
-        self.add_button("↻  Restart MechOS", self.reboot)
-        self.add_button("⏻  Shut Down", self.poweroff)
+        main = QVBoxLayout()
+        hero = self.panel("hero")
+        hl = QHBoxLayout(hero)
+        hero_text = QVBoxLayout()
+        hlabel = QLabel("YOUR GAME LIBRARY")
+        hlabel.setObjectName("section")
+        hero_text.addWidget(hlabel)
+        self.hero_name = QLabel(self.games[0]["name"] if self.games else "Steam Gamepad Library")
+        self.hero_name.setFont(QFont("Sans Serif", 24, QFont.Weight.Bold))
+        self.hero_name.setWordWrap(True)
+        hero_text.addWidget(self.hero_name)
+        hsub = QLabel("Launch installed Steam games directly, or open Steam Gamepad UI.")
+        hsub.setObjectName("muted")
+        hsub.setWordWrap(True)
+        hero_text.addWidget(hsub)
+        row = QHBoxLayout()
+        play = self.focus_button(QPushButton("Play / Open Steam"))
+        play.setObjectName("primary")
+        play.clicked.connect(self.launch_featured)
+        row.addWidget(play)
+        library = self.focus_button(QPushButton("Steam Library"))
+        library.clicked.connect(self.open_steam)
+        row.addWidget(library)
+        hero_text.addLayout(row)
+        hl.addLayout(hero_text, 2)
 
-        outer.addStretch(1)
-        hint = QLabel("Keyboard: ↑ ↓ / Enter     Controller: D-pad / A")
-        hint.setObjectName("hint")
-        outer.addWidget(hint)
+        hero_stats = QVBoxLayout()
+        st = QLabel("SYSTEM STATUS")
+        st.setObjectName("section")
+        hero_stats.addWidget(st)
+        self.stats_label = QLabel()
+        self.stats_label.setObjectName("metric")
+        self.stats_label.setWordWrap(True)
+        hero_stats.addWidget(self.stats_label)
+        gpu = QLabel(gpu_name())
+        gpu.setObjectName("muted")
+        gpu.setWordWrap(True)
+        hero_stats.addWidget(gpu)
+        hl.addLayout(hero_stats, 1)
+        main.addWidget(hero)
 
-        self.buttons[0].setFocus()
+        section = QLabel("RECENT LIBRARY")
+        section.setObjectName("section")
+        main.addWidget(section)
 
-        self.gamepad = None
-        if HAVE_PYGAME:
-            try:
-                pygame.init()
-                pygame.joystick.init()
-                if pygame.joystick.get_count() > 0:
-                    self.gamepad = pygame.joystick.Joystick(0)
-                    self.gamepad.init()
-            except Exception:
-                self.gamepad = None
+        game_scroll = QScrollArea()
+        game_scroll.setWidgetResizable(True)
+        game_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        game_wrap = QWidget()
+        gg = QGridLayout(game_wrap)
+        gg.setSpacing(10)
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.poll)
-        self.timer.start(60)
+        visible = self.games[:8]
+        if visible:
+            for i,g in enumerate(visible):
+                b = GameButton(g, self.launch_game)
+                self.focus_button(b)
+                gg.addWidget(b, i//4, i%4)
+        else:
+            msg = QLabel("No installed Steam manifests found yet. Steam Gamepad UI is ready.")
+            msg.setObjectName("muted")
+            gg.addWidget(msg,0,0)
+        game_scroll.setWidget(game_wrap)
+        main.addWidget(game_scroll, 1)
 
-    def add_button(self, label, callback):
-        b = QPushButton(label)
-        b.clicked.connect(callback)
-        self.centralWidget().layout().addWidget(b)
-        self.buttons.append(b)
+        quick_modes = QLabel("QUICK MODES")
+        quick_modes.setObjectName("section")
+        main.addWidget(quick_modes)
+        modes = QHBoxLayout()
+        for label, cb in [
+            ("Gaming Mode", lambda: None),
+            ("Desktop Mode", lambda: self.switch_mode("desktop")),
+            ("Creator Mode", lambda: self.switch_mode("creator")),
+            ("VR / SteamVR", self.open_vr),
+        ]:
+            b = self.focus_button(QPushButton(label))
+            b.setObjectName("mode")
+            b.clicked.connect(cb)
+            modes.addWidget(b)
+        main.addLayout(modes)
+        body.addLayout(main, 4)
+
+        side = QVBoxLayout()
+        quick = self.panel()
+        ql = QVBoxLayout(quick)
+        qtitle = QLabel("QUICK ACCESS")
+        qtitle.setObjectName("section")
+        ql.addWidget(qtitle)
+        actions = [
+            ("Performance Center", ["/usr/local/bin/mechos-performance-center"]),
+            ("Update Center", ["/usr/local/bin/mechos-update-center"]),
+            ("Controller Settings", ["systemsettings","kcm_gamecontroller"]),
+            ("Display Settings", ["systemsettings","kcm_kscreen"]),
+            ("Audio Settings", ["systemsettings","kcm_pulseaudio"]),
+        ]
+        for label,cmd in actions:
+            b = self.focus_button(QPushButton(label))
+            b.clicked.connect(lambda checked=False,c=cmd: spawn(c))
+            ql.addWidget(b)
+        side.addWidget(quick)
+
+        launchers = self.panel()
+        ll = QVBoxLayout(launchers)
+        ltitle = QLabel("LAUNCHERS")
+        ltitle.setObjectName("section")
+        ll.addWidget(ltitle)
+        for label, cmd in [
+            ("Steam", ["steam","-gamepadui"]),
+            ("Lutris", ["lutris"]),
+            ("Heroic", ["flatpak","run","com.heroicgameslauncher.hgl"]),
+        ]:
+            b = self.focus_button(QPushButton(label))
+            b.clicked.connect(lambda checked=False,c=cmd: spawn(c))
+            ll.addWidget(b)
+        side.addWidget(launchers)
+
+        power = self.panel()
+        pl = QVBoxLayout(power)
+        ptitle = QLabel("SYSTEM")
+        ptitle.setObjectName("section")
+        pl.addWidget(ptitle)
+        restart = self.focus_button(QPushButton("Restart MechOS"))
+        restart.clicked.connect(lambda: spawn(["systemctl","reboot"]))
+        pl.addWidget(restart)
+        shutdown = self.focus_button(QPushButton("Shut Down"))
+        shutdown.clicked.connect(lambda: spawn(["systemctl","poweroff"]))
+        pl.addWidget(shutdown)
+        side.addWidget(power)
+        side.addStretch()
+        body.addLayout(side, 1)
+
+        outer.addLayout(body,1)
+
+        bottom = self.panel("bottom")
+        bl = QHBoxLayout(bottom)
+        hint = QLabel("A/Enter Select   •   B/Esc Back/Steam   •   D-pad/Arrows Navigate")
+        hint.setObjectName("muted")
+        bl.addWidget(hint)
+        bl.addStretch()
+        self.pad_label = QLabel("Controller: detecting")
+        self.pad_label.setObjectName("metric")
+        bl.addWidget(self.pad_label)
+        outer.addWidget(bottom)
+
+        if self.focusables:
+            self.focusables[0].setFocus()
+
+    def setup_gamepad(self):
+        if not HAVE_PYGAME:
+            self.pad_label.setText("Controller: pygame unavailable")
+            return
+        try:
+            pygame.init()
+            pygame.joystick.init()
+            self.refresh_gamepad()
+        except Exception:
+            self.gamepad = None
+
+    def refresh_gamepad(self):
+        if not HAVE_PYGAME:
+            return
+        try:
+            count = pygame.joystick.get_count()
+            if count == self.last_pad_count:
+                return
+            self.last_pad_count = count
+            self.gamepad = None
+            if count:
+                self.gamepad = pygame.joystick.Joystick(0)
+                self.gamepad.init()
+                self.pad_label.setText("Controller: " + self.gamepad.get_name()[:30])
+            else:
+                self.pad_label.setText("Controller: none")
+        except Exception:
+            pass
 
     def move_focus(self, delta):
-        self.index = (self.index + delta) % len(self.buttons)
-        self.buttons[self.index].setFocus()
+        if not self.focusables:
+            return
+        self.focus_index = (self.focus_index + delta) % len(self.focusables)
+        self.focusables[self.focus_index].setFocus()
 
     def keyPressEvent(self, event: QKeyEvent):
-        if event.key() in (Qt.Key.Key_Down, Qt.Key.Key_S):
+        if event.key() in (Qt.Key.Key_Down, Qt.Key.Key_Right, Qt.Key.Key_S, Qt.Key.Key_D):
             self.move_focus(1)
-        elif event.key() in (Qt.Key.Key_Up, Qt.Key.Key_W):
+        elif event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Left, Qt.Key.Key_W, Qt.Key.Key_A):
             self.move_focus(-1)
         elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
-            self.buttons[self.index].click()
+            w = self.focusWidget()
+            if isinstance(w,QPushButton):
+                w.click()
         elif event.key() == Qt.Key.Key_Escape:
             self.open_steam()
         else:
             super().keyPressEvent(event)
 
-    def poll(self):
-        if self.steam is not None and self.steam.poll() is not None:
-            self.steam = None
-            self.showFullScreen()
-            self.raise_()
-            self.activateWindow()
-
+    def tick(self):
+        self.refresh_gamepad()
         if not self.gamepad or not HAVE_PYGAME:
             return
-
         try:
             for ev in pygame.event.get():
                 if ev.type == pygame.JOYHATMOTION:
-                    if ev.value[1] > 0:
-                        self.move_focus(-1)
-                    elif ev.value[1] < 0:
+                    if ev.value[0] > 0 or ev.value[1] < 0:
                         self.move_focus(1)
+                    elif ev.value[0] < 0 or ev.value[1] > 0:
+                        self.move_focus(-1)
                 elif ev.type == pygame.JOYBUTTONDOWN:
-                    # Common SDL mapping: A=0, B=1
                     if ev.button == 0:
-                        self.buttons[self.index].click()
+                        w = self.focusWidget()
+                        if isinstance(w,QPushButton):
+                            w.click()
                     elif ev.button == 1:
                         self.open_steam()
         except Exception:
             pass
 
+    def refresh_stats(self):
+        self.stats_label.setText(
+            f"CPU {cpu_percent()}%   •   RAM {ram_percent()}%   •   DISK {disk_percent()}%"
+        )
+        self.net_label.setText("NET  " + network_name())
+        self.time_label.setText(time.strftime("%I:%M %p"))
+
+    def launch_featured(self):
+        if self.games:
+            self.launch_game(self.games[0])
+        else:
+            self.open_steam()
+
+    def launch_game(self, game):
+        spawn(["xdg-open", f"steam://rungameid/{game['appid']}"])
+
     def open_steam(self):
-        if self.steam is not None:
-            return
-        try:
-            self.hide()
-            self.steam = subprocess.Popen(["steam", "-gamepadui"])
-        except Exception:
-            self.steam = None
-            self.showFullScreen()
+        spawn(["steam","-gamepadui"])
 
-    def open_performance(self):
-        subprocess.Popen(["/usr/local/bin/mechos-performance-center"])
-
-    def open_updates(self):
-        subprocess.Popen(["/usr/local/bin/mechos-update-center"])
+    def open_vr(self):
+        # SteamVR app id is 250820. This opens through Steam; actual headset/runtime
+        # support remains dependent on SteamVR/Linux and the connected hardware.
+        if shutil.which("steam"):
+            spawn(["xdg-open","steam://rungameid/250820"])
+        else:
+            QMessageBox.information(self,"MechOS VR","Steam is not installed.")
 
     def switch_mode(self, mode):
         if FALLBACK:
-            # In a VM fallback Plasma session, Desktop Mode means just
-            # close MechScope; Creator Mode opens the creator dashboard.
             if mode == "creator":
-                subprocess.Popen(["/usr/local/bin/mechos-creator-mode"])
+                spawn(["/usr/local/bin/mechos-creator-mode"])
             self.close()
             return
-
         write_mode(mode)
         QApplication.quit()
 
-    def reboot(self):
-        subprocess.Popen(["systemctl", "reboot"])
-
-    def poweroff(self):
-        subprocess.Popen(["systemctl", "poweroff"])
-
 app = QApplication(sys.argv)
-app.setApplicationName("MechScope")
-window = MechScope()
-window.showFullScreen()
+app.setApplicationName("MechScope 2.0")
+w = MechScope()
+w.showFullScreen()
 sys.exit(app.exec())
 PYEOF
 chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechscope
@@ -3316,7 +3839,7 @@ mkdir -p /workspace/archlive/airootfs/usr/share/wayland-sessions
 cat > /workspace/archlive/airootfs/usr/share/wayland-sessions/mechos-gaming.desktop << "EOF"
 [Desktop Entry]
 Name=MechOS Gaming Mode
-Comment=MechOS Gamescope + Steam Gamepad UI
+Comment=MechOS Gamescope + MechScope 2.0
 Exec=/usr/local/bin/mechos-gaming-session
 Type=Application
 DesktopNames=MechOS;Gamescope;Steam;
@@ -3599,7 +4122,7 @@ fi
 mkdir -p /var/lib/mechos
 cat > /etc/mechos-release <<'RELEASEEOF'
 NAME="MechOS"
-VERSION="0.1.5 Alpha"
+VERSION="0.3.0 Alpha"
 ID=mechos
 ID_LIKE=arch
 VARIANT="Gaming + Creator"
@@ -3766,6 +4289,13 @@ test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.want
 test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/switcheroo-control.service
 grep -q 'DeviceTimeout=3' /workspace/archlive/airootfs/etc/plymouth/plymouthd.conf
 test -x /workspace/archlive/airootfs/usr/local/bin/mechscope
+grep -q "MECHSCOPE 2.0" /workspace/archlive/airootfs/usr/local/bin/mechscope
+grep -q "RECENT LIBRARY" /workspace/archlive/airootfs/usr/local/bin/mechscope
+grep -q "PROJECT MANAGER" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
+grep -q "ASSET BROWSER" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
+grep -q "CREATOR MODE PRESETS" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
+grep -q "exec /usr/local/bin/mechos-live-setup" /workspace/archlive/airootfs/usr/local/bin/mechos-live-welcome
+grep -q "MECHSCOPE 2.0" /workspace/archlive/airootfs/usr/share/plymouth/themes/mechos/mechos.script
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-performance-center
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-firstboot
@@ -3819,6 +4349,11 @@ grep -q "u mechos 1000" /workspace/archlive/airootfs/usr/lib/sysusers.d/mechos.c
 echo "MechOS boot/admin validation passed."
 
 mkdir -p /workspace/out /workspace/work
+
+# MECHOS_CURRENT_INTEGRATION_LATE
+# Re-apply after all legacy builder blocks so current fixes win.
+bash /workspace/scripts/mechos-current-integration.sh final
+
 mkarchiso -v \
   -w /workspace/work \
   -o /workspace/out \
