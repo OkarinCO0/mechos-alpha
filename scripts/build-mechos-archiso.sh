@@ -69,12 +69,11 @@ xfsprogs
 openssh
 archinstall
 arch-install-scripts
-gptfdisk
-parted
 grub
 efibootmgr
 os-prober
 git
+git-lfs
 curl
 wget
 unzip
@@ -82,10 +81,22 @@ zip
 p7zip
 sudo
 flatpak
+base-devel
+cmake
+ninja
+clang
 python
+python-pip
 python-pygame
+python-evdev
+python-websocket-client
 brightnessctl
 python-pyqt6
+ffmpeg
+blender
+obs-studio
+kdenlive
+krita
 zram-generator
 power-profiles-daemon
 irqbalance
@@ -104,6 +115,8 @@ snapper
 libva-utils
 pciutils
 usbutils
+gpu-screen-recorder
+gpu-screen-recorder-ui
 intel-media-driver
 libva-mesa-driver
 PKGS
@@ -121,12 +134,71 @@ mkdir -p /workspace/archlive/airootfs/etc/skel/Desktop
 mkdir -p /workspace/archlive/airootfs/home/mechos/Desktop
 
 mkdir -p /workspace/archlive/airootfs/usr/local/libexec
+mkdir -p /workspace/archlive/airootfs/usr/share/mechos/creator-packages
+
+cat > /workspace/archlive/airootfs/usr/share/mechos/creator-packages/streamer.json << "EOF"
+{
+  "id": "streamer",
+  "name": "Streamer Package",
+  "description": "Streaming, recording, editing and creator communication tools.",
+  "disk_space": "Approximately 4 GB",
+  "native": ["obs", "kdenlive", "audacity"],
+  "flatpak": ["discord"]
+}
+EOF
+
+cat > /workspace/archlive/airootfs/usr/share/mechos/creator-packages/graphics.json << "EOF"
+{
+  "id": "graphics",
+  "name": "Graphics Creator",
+  "description": "3D modeling, texturing and digital artwork tools.",
+  "disk_space": "Approximately 5 GB",
+  "native": ["blender", "krita"],
+  "flatpak": []
+}
+EOF
+
+cat > /workspace/archlive/airootfs/usr/share/mechos/creator-packages/game-dev.json << "EOF"
+{
+  "id": "game-dev",
+  "name": "Game Developer",
+  "description": "Open-source engine, 3D tools, editor and Git client.",
+  "disk_space": "Approximately 7 GB plus downloaded engines",
+  "native": ["godot", "blender"],
+  "flatpak": ["vscode", "gitkraken", "unityhub"]
+}
+EOF
+
+cat > /workspace/archlive/airootfs/usr/share/mechos/creator-packages/windows-apps.json << "EOF"
+{
+  "id": "windows-apps",
+  "name": "Windows Apps & Bottles",
+  "description": "Run supported Windows applications through Bottles, Wine and Proton compatibility tools.",
+  "disk_space": "Approximately 3 GB",
+  "native": ["wine", "winetricks", "protontricks"],
+  "flatpak": ["bottles", "protonupqt"]
+}
+EOF
 
 cat > /workspace/archlive/airootfs/usr/local/libexec/mechos-creator-app-installer << "EOF"
 #!/usr/bin/env bash
 set -euo pipefail
 
 [ "$(id -u)" -eq 0 ] || { echo "Administrator privileges required." >&2; exit 1; }
+
+if [ "${1:-}" = "--package" ]; then
+  case "${2:-}" in
+    streamer) PKGS=(obs-studio kdenlive audacity) ;;
+    graphics) PKGS=(blender krita) ;;
+    game-dev) PKGS=(godot blender) ;;
+    windows-apps) PKGS=(wine winetricks protontricks) ;;
+    *) echo "Unknown Creator package id." >&2; exit 2 ;;
+  esac
+  if command -v snapper >/dev/null 2>&1 && snapper list-configs 2>/dev/null | awk '{print $1}' | grep -qx root; then
+    snapper -c root create --type single --description "Before MechOS Creator package: ${2}" || true
+  fi
+  exec pacman -S --needed --noconfirm "${PKGS[@]}"
+fi
 
 case "${1:-}" in
   blender) PKG=blender ;;
@@ -157,6 +229,7 @@ import sys
 from pathlib import Path
 
 ROOT_HELPER="/usr/local/libexec/mechos-creator-app-installer"
+MANIFEST_DIR=Path("/usr/share/mechos/creator-packages")
 
 NATIVE={
  "blender":("blender",["blender"]),
@@ -182,6 +255,12 @@ FLATPAK={
  "discord":"com.discordapp.Discord",
 }
 
+def manifest(package):
+    import json
+    path=MANIFEST_DIR/(package+".json")
+    if not path.is_file(): raise SystemExit("Unknown Creator package id")
+    return json.loads(path.read_text())
+
 def fp_installed(appid):
     return subprocess.run(["flatpak","info","--user",appid],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0 or \
            subprocess.run(["flatpak","info","--system",appid],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0
@@ -205,6 +284,27 @@ def install(app):
         subprocess.run(["flatpak","install","--user","-y","flathub",FLATPAK[app]],check=True)
     else:
         raise SystemExit(2)
+
+def package_status(package):
+    data=manifest(package)
+    states=[]
+    for app in data.get("native",[]):
+        states.append(app in NATIVE and shutil.which(NATIVE[app][1][0]) is not None)
+    for app in data.get("flatpak",[]):
+        states.append(app in FLATPAK and fp_installed(FLATPAK[app]))
+    print("installed" if states and all(states) else "partial" if any(states) else "missing")
+
+def install_package(package):
+    data=manifest(package)
+    subprocess.run(["pkexec",ROOT_HELPER,"--package",package],check=True)
+    flatpaks=data.get("flatpak",[])
+    if flatpaks:
+        subprocess.run([
+            "flatpak","remote-add","--user","--if-not-exists",
+            "flathub","https://flathub.org/repo/flathub.flatpakrepo"
+        ],check=True)
+        for app in flatpaks:
+            subprocess.run(["flatpak","install","--user","-y","flathub",FLATPAK[app]],check=True)
 
 def launch(app):
     if app in NATIVE:
@@ -234,8 +334,9 @@ if __name__=="__main__":
     if len(sys.argv)>=2 and sys.argv[1]=="windows-installer":
         windows_installer(); raise SystemExit
     if len(sys.argv)!=3:
-        raise SystemExit("Usage: mechos-creator-app {status|install|launch} APP")
-    {"status":status,"install":install,"launch":launch}[sys.argv[1]](sys.argv[2])
+        raise SystemExit("Usage: mechos-creator-app {status|install|launch|package-status|package-install} ID")
+    {"status":status,"install":install,"launch":launch,
+     "package-status":package_status,"package-install":install_package}[sys.argv[1]](sys.argv[2])
 PYEOF
 chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-creator-app
 
@@ -286,6 +387,13 @@ CATALOG=[
  ("Winetricks","winetricks","Wine components","native"),
  ("Protontricks","protontricks","Steam Proton prefix tools","native"),
  ("Discord","discord","Creator/community chat","flatpak"),
+]
+
+PACKAGES=[
+ ("Streamer Package","streamer","OBS Studio, Kdenlive, Audacity and Discord","Approximately 4 GB"),
+ ("Graphics Creator","graphics","Blender and Krita","Approximately 5 GB"),
+ ("Game Developer","game-dev","Godot, Blender, VS Code, GitKraken and Unity Hub","Approximately 7 GB + engines"),
+ ("Windows Apps & Bottles","windows-apps","Bottles, Wine, Winetricks, Protontricks and ProtonUp-Qt","Approximately 3 GB"),
 ]
 
 STYLE="""
@@ -399,16 +507,40 @@ class AppCard(QFrame):
         if st=="installed": spawn([APP,"launch",self.appid])
         else: self.owner.install(self)
 
+class PackageCard(QFrame):
+    def __init__(self,owner,info):
+        super().__init__(); self.owner=owner; self.info=info; self.setObjectName("card")
+        name,package,desc,space=info
+        l=QVBoxLayout(self); l.setContentsMargins(14,12,14,12)
+        n=QLabel(name); n.setFont(QFont("Sans Serif",12,QFont.Weight.Bold)); l.addWidget(n)
+        d=QLabel(desc); d.setObjectName("muted"); d.setWordWrap(True); l.addWidget(d)
+        size=QLabel("DISK SPACE  "+space); size.setObjectName("metric"); l.addWidget(size)
+        l.addStretch()
+        self.state=QLabel(); self.state.setObjectName("metric"); l.addWidget(self.state)
+        self.button=QPushButton(); self.button.setObjectName("action"); self.button.clicked.connect(self.activate); l.addWidget(self.button)
+        self.refresh()
+
+    @property
+    def package(self): return self.info[1]
+
+    def refresh(self):
+        st=out([APP,"package-status",self.package]) or "missing"
+        if st=="installed": self.state.setText("INSTALLED"); self.button.setText("Repair / Verify")
+        elif st=="partial": self.state.setText("PARTIALLY INSTALLED"); self.button.setText("Complete Install")
+        else: self.state.setText("NOT INSTALLED"); self.button.setText("Install Package")
+
+    def activate(self): self.owner.install_package(self)
+
 class Creator(QMainWindow):
     def __init__(self):
-        super().__init__(); self.cards=[]
+        super().__init__(); self.cards=[]; self.package_cards=[]
         PROJECT_ROOT.mkdir(parents=True,exist_ok=True)
         ASSET_ROOT.mkdir(parents=True,exist_ok=True)
         CONFIG_DIR.mkdir(parents=True,exist_ok=True)
         self.setWindowTitle("MechOS Creator Mode 2.0")
         self.resize(1580,960); self.setMinimumSize(1180,720); self.setStyleSheet(STYLE)
         self.build()
-        self.timer=QTimer(self); self.timer.timeout.connect(self.metrics); self.timer.start(5000); self.metrics()
+        self.timer=QTimer(self); self.timer.timeout.connect(self.metrics); self.timer.start(2500); self.metrics()
 
     def panel(self,name="panel"):
         p=QFrame(); p.setObjectName(name); return p
@@ -440,6 +572,7 @@ class Creator(QMainWindow):
           ("▣  Projects",self.projects),
           ("⬡  Engines",lambda:self.catalog("GAME ENGINES",["unityhub","unreal","godot","vscode","gitkraken"])),
           ("⚒  Tools",lambda:self.catalog("CREATOR TOOLS",["blender","krita","obs","kdenlive","audacity","lmms","vscode","gitkraken"])),
+          ("▦  App Store",self.app_store),
           ("▧  Assets",self.assets),
           ("✦  MechClip AI",self.mechclip),
           ("◈  Learn",self.learn),
@@ -512,6 +645,21 @@ class Creator(QMainWindow):
             info=next(x for x in CATALOG if x[1]==appid); c=AppCard(self,info); self.cards.append(c); g.addWidget(c,i//4,i%4)
         v.addLayout(g)
         v.addStretch(); return s
+
+    def app_store(self):
+        s,v=self.scroll(); self.section(v,"CREATOR MODE APP STORE")
+        intro=QLabel("Install trusted MechOS creator bundles or choose individual applications. Native packages request administrator approval; Flatpaks install only for your user account.")
+        intro.setObjectName("muted"); intro.setWordWrap(True); v.addWidget(intro)
+        self.section(v,"ONE-CLICK CREATOR PACKAGES")
+        pg=QGridLayout()
+        for i,info in enumerate(PACKAGES):
+            c=PackageCard(self,info); self.package_cards.append(c); pg.addWidget(c,i//3,i%3)
+        v.addLayout(pg)
+        self.section(v,"INDIVIDUAL APPLICATIONS")
+        g=QGridLayout()
+        for i,info in enumerate(CATALOG):
+            c=AppCard(self,info); self.cards.append(c); g.addWidget(c,i//4,i%4)
+        v.addLayout(g); v.addStretch(); return s
 
     def new_project(self):
         name,ok=QInputDialog.getText(self,"New Project","Project name:")
@@ -649,8 +797,19 @@ class Creator(QMainWindow):
         spawn(["konsole","-e","bash","-lc",f"{APP} install {card.appid}; rc=$?; echo; echo Installer exit code: $rc; read -rp 'Press Enter to close...'"])
         QTimer.singleShot(5000,self.refresh_cards)
 
+    def install_package(self,card):
+        if is_live():
+            QMessageBox.information(self,"MechOS Live Desktop","Creator packages can only be installed after MechOS is installed to disk.")
+            return
+        name,package,desc,space=card.info
+        message=f"Install {name}?\n\nIncludes: {desc}\nRequired space: {space}\n\nMechOS will request administrator approval for native packages."
+        if QMessageBox.question(self,"Install Creator Package",message)!=QMessageBox.StandardButton.Yes:return
+        spawn(["konsole","-e","bash","-lc",f"{APP} package-install {package}; rc=$?; echo; echo Package installer exit code: $rc; read -rp 'Press Enter to close...'"])
+        QTimer.singleShot(8000,self.refresh_cards)
+
     def refresh_cards(self):
         for c in self.cards:c.refresh()
+        for c in self.package_cards:c.refresh()
 
     def quick(self,appid):
         info=next(x for x in CATALOG if x[1]==appid)
@@ -1846,6 +2005,204 @@ chmod 755 \
   /workspace/archlive/airootfs/usr/local/bin/mechos-recovery-helper \
   /workspace/archlive/airootfs/usr/local/bin/mechos-preserve-home
 
+cat > /workspace/archlive/airootfs/usr/local/libexec/mechos-gaming-setup-helper << "EOF"
+#!/usr/bin/env bash
+set -euo pipefail
+
+[ "$(id -u)" -eq 0 ] || { echo "Administrator privileges required." >&2; exit 1; }
+[ "\${1:-}" = "install-steam" ] || { echo "Usage: mechos-gaming-setup-helper install-steam" >&2; exit 2; }
+
+LOG="/var/log/mechos-gaming-setup.log"
+mkdir -p /var/log
+exec > >(tee -a "$LOG") 2>&1
+echo "=== MechOS Steam setup $(date --iso-8601=seconds) ==="
+
+if ! grep -q '^[[:space:]]*\[multilib\]' /etc/pacman.conf; then
+  if grep -q '^[[:space:]]*#\[multilib\]' /etc/pacman.conf; then
+    sed -i '/^[[:space:]]*#\[multilib\]/,/^[[:space:]]*#Include = \/etc\/pacman.d\/mirrorlist/ s/^[[:space:]]*#//' /etc/pacman.conf
+  else
+    printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+  fi
+fi
+
+if command -v snapper >/dev/null 2>&1 && snapper list-configs 2>/dev/null | awk '{print $1}' | grep -qx root; then
+  snapper -c root create --type single --description "Before MechOS Steam setup" || true
+fi
+
+packages=(steam gamemode lib32-gamemode mangohud lib32-mangohud vulkan-tools mesa lib32-mesa)
+gpu="$(lspci 2>/dev/null | grep -Ei 'VGA|3D|Display' || true)"
+grep -Eqi 'AMD|ATI' <<<"$gpu" && packages+=(vulkan-radeon lib32-vulkan-radeon)
+grep -Eqi 'Intel' <<<"$gpu" && packages+=(vulkan-intel lib32-vulkan-intel)
+grep -Eqi 'NVIDIA' <<<"$gpu" && packages+=(nvidia-utils lib32-nvidia-utils)
+
+# A full upgrade avoids creating an unsupported partial-upgrade state on Arch.
+pacman -Syu --needed --noconfirm "\${packages[@]}"
+ldconfig
+
+echo
+echo "Steam and gaming dependencies installed."
+echo "Re-run dependency validation in MechOS Post-Install."
+EOF
+chmod 755 /workspace/archlive/airootfs/usr/local/libexec/mechos-gaming-setup-helper
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-postinstall << "PYEOF"
+#!/usr/bin/env python3
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import (
+    QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QPushButton, QTabWidget, QVBoxLayout, QWidget
+)
+
+HELPER="/usr/local/libexec/mechos-gaming-setup-helper"
+FIRST_RUN=Path.home()/".config/mechos/postinstall-seen"
+
+STYLE="""
+QWidget{background:#07080d;color:#f6f2fb;font-family:Sans Serif}
+QFrame#panel{background:#0e0f16;border:1px solid #2b2135;border-radius:12px}
+QLabel#title{font-size:30px;font-weight:900;color:white}
+QLabel#purple{font-size:16px;font-weight:800;color:#c273ff}
+QLabel#muted{color:#aaa1b4}
+QPushButton{background:#351750;border:1px solid #704198;border-radius:8px;padding:10px;color:#f0dfff;font-weight:700}
+QPushButton:hover{background:#5a2381}
+QTabWidget::pane{border:1px solid #2b2135}
+QTabBar::tab{background:#11131b;padding:11px 20px}
+QTabBar::tab:selected{background:#6928b7}
+"""
+
+def run(cmd):
+    return subprocess.run(cmd,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+
+def installed(package):
+    return run(["pacman","-Q",package]).returncode==0
+
+def multilib_enabled():
+    try:
+        return any(line.strip()=="[multilib]" for line in Path("/etc/pacman.conf").read_text(errors="ignore").splitlines())
+    except OSError:
+        return False
+
+def gpu_text():
+    result=run(["bash","-lc","lspci | grep -Ei 'VGA|3D|Display' | sed 's/^[^ ]* //'"])
+    return result.stdout.strip() or "No GPU detected"
+
+def dependency_results():
+    gpu=gpu_text().lower()
+    checks=[
+      ("Multilib repository",multilib_enabled(),"Steam and 32-bit packages"),
+      ("Steam",installed("steam"),"Native Arch package"),
+      ("GameMode",installed("gamemode") and installed("lib32-gamemode"),"64-bit and 32-bit runtime"),
+      ("MangoHud",installed("mangohud") and installed("lib32-mangohud"),"Performance overlay"),
+      ("Vulkan tools",installed("vulkan-tools"),"Vulkan diagnostics"),
+      ("Mesa runtime",installed("mesa") and installed("lib32-mesa"),"64-bit and 32-bit graphics runtime"),
+    ]
+    if "amd" in gpu or "ati" in gpu:
+        checks.append(("AMD Vulkan",installed("vulkan-radeon") and installed("lib32-vulkan-radeon"),"64-bit and 32-bit AMD driver"))
+    if "intel" in gpu:
+        checks.append(("Intel Vulkan",installed("vulkan-intel") and installed("lib32-vulkan-intel"),"64-bit and 32-bit Intel driver"))
+    if "nvidia" in gpu:
+        checks.append(("NVIDIA Vulkan",installed("nvidia-utils") and installed("lib32-nvidia-utils"),"64-bit and 32-bit NVIDIA driver"))
+    checks.append(("32-bit Vulkan loader",Path("/usr/lib32/libvulkan.so.1").exists(),"Required by many Proton games"))
+    return checks
+
+class PostInstall(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("MechOS Post-Install")
+        self.resize(1050,700)
+        self.setMinimumSize(850,580)
+        self.setStyleSheet(STYLE)
+        root=QWidget(); self.setCentralWidget(root)
+        outer=QVBoxLayout(root)
+        title=QLabel("MECHOS POST-INSTALL"); title.setObjectName("title"); outer.addWidget(title)
+        subtitle=QLabel("Finish configuring your installed MechOS system."); subtitle.setObjectName("muted"); outer.addWidget(subtitle)
+        self.tabs=QTabWidget(); outer.addWidget(self.tabs,1)
+        self.tabs.addTab(self.overview_page(),"Overview")
+        self.tabs.addTab(self.gaming_page(),"Gaming Setup")
+        self.tabs.currentChanged.connect(lambda index:self.validate() if index==1 else None)
+        QTimer.singleShot(350,self.validate)
+
+    def overview_page(self):
+        page=QWidget(); layout=QVBoxLayout(page)
+        heading=QLabel("POST-INSTALL OVERVIEW"); heading.setObjectName("purple"); layout.addWidget(heading)
+        note=QLabel("Steam is installed automatically with MechOS. Gaming Setup validates Steam, multilib, Vulkan and the required 32-bit GPU libraries. Creator packages remain available in the Creator Mode App Store.")
+        note.setObjectName("muted"); note.setWordWrap(True); layout.addWidget(note)
+        gaming=QPushButton("Open Gaming Setup"); gaming.clicked.connect(lambda:self.tabs.setCurrentIndex(1)); layout.addWidget(gaming)
+        creator=QPushButton("Open Creator Mode App Store"); creator.clicked.connect(lambda:subprocess.Popen(["/usr/local/bin/mechos-creator-mode"])); layout.addWidget(creator)
+        updates=QPushButton("Open Update Center"); updates.clicked.connect(lambda:subprocess.Popen(["/usr/local/bin/mechos-update-center"])); layout.addWidget(updates)
+        layout.addStretch(); return page
+
+    def gaming_page(self):
+        page=QWidget(); layout=QVBoxLayout(page)
+        heading=QLabel("GAMING SETUP"); heading.setObjectName("purple"); layout.addWidget(heading)
+        self.gpu=QLabel(); self.gpu.setObjectName("muted"); self.gpu.setWordWrap(True); layout.addWidget(self.gpu)
+        note=QLabel("Install native Steam and automatically configure the matching 64-bit and 32-bit Vulkan dependencies for the detected GPU.")
+        note.setObjectName("muted"); note.setWordWrap(True); layout.addWidget(note)
+        actions=QHBoxLayout()
+        self.install_button=QPushButton("Repair Steam Setup"); self.install_button.clicked.connect(self.install_steam)
+        validate=QPushButton("Validate Dependencies"); validate.clicked.connect(self.validate)
+        launch=QPushButton("Launch Steam"); launch.clicked.connect(self.launch_steam)
+        actions.addWidget(self.install_button); actions.addWidget(validate); actions.addWidget(launch); layout.addLayout(actions)
+        panel=QFrame(); panel.setObjectName("panel"); self.results=QVBoxLayout(panel); layout.addWidget(panel)
+        self.summary=QLabel(); self.summary.setWordWrap(True); layout.addWidget(self.summary)
+        layout.addStretch(); return page
+
+    def validate(self):
+        self.gpu.setText("Detected GPU:\\n"+gpu_text())
+        while self.results.count():
+            item=self.results.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+        checks=dependency_results()
+        passed=0
+        for name,ok,detail in checks:
+            row=QLabel(("✓  " if ok else "✗  ")+name+" — "+detail)
+            row.setStyleSheet("color:#6ee7a8;font-weight:750" if ok else "color:#ff8a9b;font-weight:750")
+            self.results.addWidget(row); passed+=int(ok)
+        ready=passed==len(checks)
+        self.summary.setStyleSheet("color:#6ee7a8;font-weight:750" if ready else "color:#ff8a9b;font-weight:750")
+        self.summary.setText("Gaming dependencies are ready." if ready else f"{len(checks)-passed} gaming dependency check(s) need attention.")
+        self.install_button.setText("Repair Steam Setup" if installed("steam") else "Install Missing Steam")
+
+    def install_steam(self):
+        if QMessageBox.question(self,"Repair Steam Setup","Validate and repair native Steam and the dependencies for this GPU?\\n\\nA system update and administrator approval are required.")!=QMessageBox.StandardButton.Yes:
+            return
+        subprocess.Popen(["konsole","-e","bash","-lc",f"pkexec {HELPER} install-steam; rc=$?; echo; echo Setup exit code: $rc; read -rp 'Press Enter to close...'"])
+        QTimer.singleShot(12000,self.validate)
+
+    def launch_steam(self):
+        if shutil.which("steam"): subprocess.Popen(["steam"])
+        else: QMessageBox.information(self,"MechOS Post-Install","Steam is missing from this installation. Select Install Missing Steam to repair it.")
+
+    def closeEvent(self,event):
+        FIRST_RUN.parent.mkdir(parents=True,exist_ok=True)
+        FIRST_RUN.touch()
+        super().closeEvent(event)
+
+if "--first-run" in sys.argv and FIRST_RUN.exists():
+    raise SystemExit(0)
+if Path("/run/archiso/bootmnt").exists():
+    raise SystemExit(0)
+app=QApplication(sys.argv); app.setApplicationName("MechOS Post-Install")
+window=PostInstall(); window.show(); sys.exit(app.exec())
+PYEOF
+chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-postinstall
+
+cat > /workspace/archlive/airootfs/usr/share/applications/mechos-postinstall.desktop << "EOF"
+[Desktop Entry]
+Type=Application
+Name=MechOS Post-Install
+Comment=Configure gaming and creator software
+Exec=/usr/local/bin/mechos-postinstall
+Icon=mechos
+Categories=System;Settings;
+Terminal=false
+Keywords=MechOS;Post-Install;Gaming;Steam;Vulkan;
+EOF
+
 cat > /workspace/archlive/airootfs/usr/local/bin/mechos-firstboot << "EOF"
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1906,316 +2263,6 @@ fi
 # Apply the cumulative MechOS runtime/installer integration.
 bash /workspace/scripts/mechos-current-integration.sh early
 
-
-cat > /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical << "EOF"
-#!/usr/bin/env bash
-set -euo pipefail
-
-PLAN=""
-LOG="/var/log/mechos-graphical-install.log"
-PAYLOAD="/usr/share/mechos/install-payload"
-PORT=45811
-
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --plan)
-      PLAN="${2:-}"
-      shift 2
-      ;;
-    *)
-      echo "Unknown argument: $1" >&2
-      exit 2
-      ;;
-  esac
-done
-
-[ "$(id -u)" -eq 0 ] || { echo "Must run as root." >&2; exit 3; }
-[ -n "$PLAN" ] && [ -s "$PLAN" ] || { echo "Missing install plan." >&2; exit 4; }
-
-mkdir -p /var/log
-: > "$LOG"
-exec > >(tee -a "$LOG") 2>&1
-
-cleanup() {
-  rm -f "$PLAN" 2>/dev/null || true
-  if [ -n "${SERVER_PID:-}" ]; then
-    kill "$SERVER_PID" 2>/dev/null || true
-  fi
-}
-trap cleanup EXIT INT TERM
-
-read_plan() {
-  python3 - "$PLAN" "$1" <<'PYEOF'
-import json,sys
-d=json.load(open(sys.argv[1]))
-v=d.get(sys.argv[2],"")
-if isinstance(v,bool):
-    print("1" if v else "0")
-else:
-    print(v)
-PYEOF
-}
-
-DISK="$(read_plan disk)"
-USERNAME="$(read_plan username)"
-PASSWORD_HASH="$(read_plan password_hash)"
-HOSTNAME="$(read_plan hostname)"
-FILESYSTEM="$(read_plan filesystem)"
-TIMEZONE="$(read_plan timezone)"
-
-[ -b "$DISK" ] || { echo "ERROR: target is not a block device: $DISK"; exit 10; }
-[[ "$USERNAME" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] || { echo "ERROR: invalid username"; exit 11; }
-[ -n "$PASSWORD_HASH" ] || { echo "ERROR: password hash missing"; exit 12; }
-[ -n "$HOSTNAME" ] || HOSTNAME="mechos"
-[ -n "$TIMEZONE" ] || TIMEZONE="UTC"
-case "$FILESYSTEM" in
-  btrfs|ext4) ;;
-  *) FILESYSTEM="btrfs" ;;
-esac
-
-ROOT_PART=""
-BOOT_PART=""
-
-part_path() {
-  local d="$1" n="$2"
-  case "$d" in
-    *nvme*|*mmcblk*) printf '%sp%s\n' "$d" "$n" ;;
-    *) printf '%s%s\n' "$d" "$n" ;;
-  esac
-}
-
-echo "MECHOS_GRAPHICAL_STAGE=preflight"
-echo "Target: $DISK"
-echo "User: $USERNAME"
-echo "Filesystem: $FILESYSTEM"
-echo "Firmware: $([ -d /sys/firmware/efi ] && echo UEFI || echo BIOS)"
-
-for cmd in wipefs parted pacstrap genfstab arch-chroot mkfs.fat; do
-  command -v "$cmd" >/dev/null 2>&1 || {
-    echo "ERROR: required installer command missing: $cmd"
-    exit 13
-  }
-done
-
-if [ "$FILESYSTEM" = "btrfs" ]; then
-  command -v mkfs.btrfs >/dev/null 2>&1 || { echo "ERROR: mkfs.btrfs missing"; exit 14; }
-else
-  command -v mkfs.ext4 >/dev/null 2>&1 || { echo "ERROR: mkfs.ext4 missing"; exit 15; }
-fi
-
-curl -fsSI --connect-timeout 8 --max-time 15 \
-  https://geo.mirror.pkgbuild.com/core/os/x86_64/core.db >/dev/null 2>&1 || {
-    echo "ERROR: No Arch package mirror connection."
-    exit 16
-  }
-
-echo "MECHOS_GRAPHICAL_STAGE=partition"
-
-# From this point forward the selected disk is intentionally destructive.
-swapoff -a 2>/dev/null || true
-umount -R /mnt 2>/dev/null || true
-wipefs -af "$DISK"
-parted -s "$DISK" mklabel gpt
-
-if [ -d /sys/firmware/efi ]; then
-  parted -s "$DISK" mkpart ESP fat32 1MiB 1025MiB
-  parted -s "$DISK" set 1 esp on
-  parted -s "$DISK" mkpart MECHOS 1025MiB 100%
-  BOOT_PART="$(part_path "$DISK" 1)"
-  ROOT_PART="$(part_path "$DISK" 2)"
-  partprobe "$DISK" || true
-  udevadm settle
-  mkfs.fat -F32 -n MECHOS_BOOT "$BOOT_PART"
-else
-  parted -s "$DISK" mkpart BIOSBOOT 1MiB 3MiB
-  parted -s "$DISK" set 1 bios_grub on
-  parted -s "$DISK" mkpart MECHOS 3MiB 100%
-  ROOT_PART="$(part_path "$DISK" 2)"
-  partprobe "$DISK" || true
-  udevadm settle
-fi
-
-echo "MECHOS_GRAPHICAL_STAGE=format"
-
-if [ "$FILESYSTEM" = "btrfs" ]; then
-  mkfs.btrfs -f -L MECHOS_ROOT "$ROOT_PART"
-  mount "$ROOT_PART" /mnt
-  btrfs subvolume create /mnt/@
-  btrfs subvolume create /mnt/@home
-  btrfs subvolume create /mnt/@log
-  btrfs subvolume create /mnt/@pkg
-  umount /mnt
-
-  mount -o subvol=@,compress=zstd "$ROOT_PART" /mnt
-  mkdir -p /mnt/home /mnt/var/log /mnt/var/cache/pacman/pkg
-  mount -o subvol=@home,compress=zstd "$ROOT_PART" /mnt/home
-  mount -o subvol=@log,compress=zstd "$ROOT_PART" /mnt/var/log
-  mount -o subvol=@pkg,compress=zstd "$ROOT_PART" /mnt/var/cache/pacman/pkg
-else
-  mkfs.ext4 -F -L MECHOS_ROOT "$ROOT_PART"
-  mount "$ROOT_PART" /mnt
-fi
-
-if [ -n "$BOOT_PART" ]; then
-  mkdir -p /mnt/boot
-  mount "$BOOT_PART" /mnt/boot
-fi
-
-echo "MECHOS_GRAPHICAL_STAGE=base"
-
-pacstrap -K /mnt \
-  base linux linux-firmware linux-headers \
-  sudo networkmanager curl \
-  grub efibootmgr \
-  btrfs-progs dosfstools e2fsprogs \
-  arch-install-scripts \
-  python
-
-genfstab -U /mnt > /mnt/etc/fstab
-
-echo "MECHOS_GRAPHICAL_STAGE=system-config"
-
-ln -sf "/usr/share/zoneinfo/$TIMEZONE" /mnt/etc/localtime || \
-  ln -sf /usr/share/zoneinfo/UTC /mnt/etc/localtime
-arch-chroot /mnt hwclock --systohc
-
-sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /mnt/etc/locale.gen
-arch-chroot /mnt locale-gen
-printf 'LANG=en_US.UTF-8\n' > /mnt/etc/locale.conf
-printf '%s\n' "$HOSTNAME" > /mnt/etc/hostname
-
-arch-chroot /mnt useradd -m -G wheel,audio,video,storage,input "$USERNAME"
-arch-chroot /mnt usermod -p "$PASSWORD_HASH" "$USERNAME"
-printf '%%wheel ALL=(ALL:ALL) ALL\n' > /mnt/etc/sudoers.d/10-wheel
-chmod 440 /mnt/etc/sudoers.d/10-wheel
-
-arch-chroot /mnt systemctl enable NetworkManager.service
-
-echo "MECHOS_GRAPHICAL_STAGE=bootloader"
-
-if [ -d /sys/firmware/efi ]; then
-  arch-chroot /mnt grub-install \
-    --target=x86_64-efi \
-    --efi-directory=/boot \
-    --bootloader-id=MechOS
-else
-  arch-chroot /mnt grub-install --target=i386-pc "$DISK"
-fi
-arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
-
-echo "MECHOS_GRAPHICAL_STAGE=mechos"
-
-for f in mechos-rootfs.tar.zst mechos-postinstall-target; do
-  [ -s "$PAYLOAD/$f" ] || { echo "ERROR: missing MechOS payload: $f"; exit 30; }
-done
-
-python3 -m http.server "$PORT" \
-  --bind 127.0.0.1 \
-  --directory "$PAYLOAD" \
-  >/tmp/mechos-graphical-http.log 2>&1 &
-SERVER_PID=$!
-sleep 1
-
-curl -fsS "http://127.0.0.1:${PORT}/mechos-rootfs.tar.zst" >/dev/null || {
-  echo "ERROR: local MechOS payload server failed"
-  exit 31
-}
-
-SUCCESS_TOKEN="mechos-gui-success-$(date +%s)-$$"
-cp "$PAYLOAD/mechos-postinstall-target" /mnt/root/mechos-postinstall-target
-chmod 755 /mnt/root/mechos-postinstall-target
-
-set +e
-arch-chroot /mnt /root/mechos-postinstall-target "$SUCCESS_TOKEN"
-POST_RC=$?
-set -e
-
-if [ "$POST_RC" -ne 0 ]; then
-  echo "ERROR: MechOS post-install returned code $POST_RC"
-  exit 32
-fi
-
-# The post-install target should have created the final marker.
-[ -f /mnt/var/lib/mechos/installed ] || {
-  echo "ERROR: MechOS installed marker missing"
-  exit 33
-}
-
-echo "MECHOS_GRAPHICAL_STAGE=verify"
-
-required=(
-  /mnt/usr/bin/startplasma-wayland
-  /mnt/usr/bin/sddm
-  /mnt/usr/local/bin/mechscope
-  /mnt/usr/local/bin/mechos-gaming-session
-  /mnt/usr/local/bin/mechos-performance-center
-  /mnt/usr/local/bin/mechos-update-center
-  /mnt/usr/local/bin/mechos-gpu-setup
-  /mnt/usr/local/bin/mechos-firstboot
-)
-
-for f in "${required[@]}"; do
-  [ -e "$f" ] || { echo "ERROR: installed runtime missing: ${f#/mnt}"; exit 34; }
-done
-
-sync
-
-echo "MECHOS_GRAPHICAL_STAGE=complete"
-echo "MECHOS_GRAPHICAL_INSTALL_SUCCESS"
-EOF
-chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical
-
-cat > /workspace/archlive/airootfs/usr/local/bin/mechos-installer-doctor << "EOF"
-#!/usr/bin/env bash
-set +e
-
-echo
-echo "================ MECHOS INSTALLER DOCTOR ================"
-echo "Date: $(date -Is 2>/dev/null || date)"
-echo
-
-echo "--- Network ---"
-nmcli device status 2>/dev/null || true
-curl -fsSI --connect-timeout 5 --max-time 10 \
-  https://geo.mirror.pkgbuild.com/core/os/x86_64/core.db >/dev/null 2>&1 \
-  && echo "Arch mirror: reachable" || echo "Arch mirror: NOT reachable"
-echo
-
-echo "--- Disks ---"
-lsblk -o NAME,SIZE,TYPE,FSTYPE,FSVER,LABEL,MOUNTPOINTS,MODEL 2>/dev/null || true
-echo
-
-echo "--- MechOS installer log ---"
-tail -n 180 /var/log/mechos-installer.log 2>/dev/null || true
-echo
-
-echo "--- Archinstall log ---"
-tail -n 220 /var/log/archinstall/install.log 2>/dev/null || true
-echo
-
-echo "--- Local payload server log ---"
-tail -n 120 /tmp/mechos-installer-http.log 2>/dev/null || true
-echo
-
-echo "--- Mounted target check ---"
-if mountpoint -q /mnt 2>/dev/null; then
-  echo "/mnt is mounted."
-  test -f /mnt/var/log/mechos-postinstall.log && {
-    echo
-    echo "--- Target MechOS postinstall log ---"
-    tail -n 220 /mnt/var/log/mechos-postinstall.log
-  }
-  test -f /mnt/var/lib/mechos/installed \
-    && echo "MechOS installed marker: present" \
-    || echo "MechOS installed marker: missing"
-else
-  echo "/mnt is not currently mounted."
-fi
-
-echo "=========================================================="
-EOF
-chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-installer-doctor
-
 cat > /workspace/archlive/airootfs/usr/local/bin/mechos-install << "EOF"
 #!/usr/bin/env bash
 set -euo pipefail
@@ -2225,82 +2272,38 @@ CONFIG="$PAYLOAD_DIR/archinstall-mechos.json"
 PORT=45811
 LOG="/var/log/mechos-installer.log"
 HWLOG="/var/log/mechos-installer-hardware.log"
-HTTPLOG="/tmp/mechos-installer-http.log"
 PRESERVE_HOME=0
-SELECTED_DISK=""
-SUCCESS_TOKEN="mechos-install-success-$(date +%s)-$$"
+[[ " $* " == *" --preserve-home "* ]] && PRESERVE_HOME=1
 
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --terminal) shift ;;
-    --preserve-home) PRESERVE_HOME=1; shift ;;
-    --selected-disk)
-      [ "$#" -ge 2 ] || { echo "--selected-disk requires a device path" >&2; exit 2; }
-      SELECTED_DISK="$2"
-      shift 2
-      ;;
-    *) echo "Unknown installer argument: $1" >&2; exit 2 ;;
-  esac
-done
-
-if [ ! -t 1 ]; then
-  args=(--terminal)
-  [ "$PRESERVE_HOME" -eq 1 ] && args+=(--preserve-home)
-  [ -n "$SELECTED_DISK" ] && args+=(--selected-disk "$SELECTED_DISK")
-  exec konsole -e sudo /usr/local/bin/mechos-install "${args[@]}"
+if [ "${1:-}" != "--terminal" ] && [ ! -t 1 ]; then
+  exec konsole -e bash -lc \
+    'sudo /usr/local/bin/mechos-install --terminal; rc=$?; echo; echo "Installer exit code: $rc"; read -rp "Press Enter to close..."'
 fi
 
 if [ "$(id -u)" -ne 0 ]; then
-  args=(--terminal)
-  [ "$PRESERVE_HOME" -eq 1 ] && args+=(--preserve-home)
-  [ -n "$SELECTED_DISK" ] && args+=(--selected-disk "$SELECTED_DISK")
-  exec sudo "$0" "${args[@]}"
+  exec sudo "$0" "$@"
 fi
 
 mkdir -p /var/log
 : > "$LOG"
-: > "$HTTPLOG"
 exec > >(tee -a "$LOG") 2>&1
-
-echo "============================================================"
-echo "MECHOS INSTALLER BACKEND"
-echo "Started: $(date -Is)"
-echo "============================================================"
-
-if [ -n "$SELECTED_DISK" ]; then
-  if [ ! -b "$SELECTED_DISK" ]; then
-    echo "ERROR: Selected install device does not exist: $SELECTED_DISK" >&2
-    exit 20
-  fi
-  echo "Graphical installer target: $SELECTED_DISK"
-  echo "Archinstall will still show its final disk layout for confirmation."
-fi
-
 /usr/local/bin/mechos-hardware-scan "$HWLOG" || true
 echo "Hardware scan saved to $HWLOG"
 
-command -v archinstall >/dev/null 2>&1 || { echo "ERROR: archinstall missing." >&2; exit 21; }
-command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 missing." >&2; exit 22; }
-command -v curl >/dev/null 2>&1 || { echo "ERROR: curl missing." >&2; exit 23; }
+if ! command -v archinstall >/dev/null 2>&1; then
+  echo "archinstall is not available in this image." >&2
+  exit 1
+fi
 
 for f in \
   "$PAYLOAD_DIR/mechos-rootfs.tar.zst" \
   "$PAYLOAD_DIR/mechos-postinstall-target" \
   "$CONFIG"; do
-  [ -s "$f" ] || { echo "ERROR: Missing/empty installer payload: $f" >&2; exit 24; }
+  if [ ! -f "$f" ]; then
+    echo "Missing MechOS installer payload: $f" >&2
+    exit 1
+  fi
 done
-
-python3 -m json.tool "$CONFIG" >/dev/null
-
-echo
-echo "Checking Arch package network access..."
-if ! curl -fsSI --connect-timeout 8 --max-time 15 \
-  https://geo.mirror.pkgbuild.com/core/os/x86_64/core.db >/dev/null 2>&1; then
-  echo "ERROR: No working Arch package-network connection." >&2
-  echo "Connect the Live desktop to the internet and retry." >&2
-  exit 25
-fi
-echo "Network preflight: PASS"
 
 cat <<'WARN'
 
@@ -2308,40 +2311,44 @@ cat <<'WARN'
                    MECHOS ALPHA INSTALLER
 ============================================================
 
-Archinstall handles disk layout, filesystem, user/password,
-bootloader, and the final destructive confirmation.
+Archinstall will handle disk selection, formatting, users,
+bootloader and base Arch installation.
 
-After the base system installs, MechOS deploys its full runtime.
+After Archinstall finishes its base install, MechOS will
+automatically deploy:
+  - MechScope Gaming Mode
+  - Creator Mode
+  - Desktop Mode integration
+  - Performance Center
+  - GPU setup
+  - MechOS boot graphics / Plymouth
+  - MechOS updater and first-boot services
+
+IMPORTANT:
+  Installing an operating system can erase a selected disk.
+  Read Archinstall's disk summary carefully before confirming.
+  For Alpha testing, use a VM or spare drive first.
 
 ============================================================
 WARN
 
-if [ -n "$SELECTED_DISK" ]; then
-  echo "Selected in MechOS UI: $SELECTED_DISK"
-  echo "Use this same device on Archinstall's Disk Configuration page."
-  echo
-fi
-
-if [ "$PRESERVE_HOME" -eq 1 ]; then
-  echo "PRESERVE-HOME MODE:"
-  echo "Use manual partitioning and DO NOT format existing /home storage."
-  echo
-fi
-
 if command -v kdialog >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
   kdialog --title "Install MechOS Alpha" --warningcontinuecancel \
-    "The disk/user setup screen will open now.
+    "MechOS uses Archinstall for disk setup.
 
-Installing can erase the selected target.
+The selected disk can be erased if you choose a wipe/format option.
 
-Review the final disk summary before confirming." \
+Use a VM or spare drive for Alpha testing and verify the final disk summary before confirming." \
     || exit 0
 fi
 
+# Archinstall's custom post-install commands execute inside the new system.
+# A tiny loopback-only HTTP server lets that chroot retrieve the MechOS
+# payload from the live ISO without requiring an external download.
 python3 -m http.server "$PORT" \
   --bind 127.0.0.1 \
   --directory "$PAYLOAD_DIR" \
-  >"$HTTPLOG" 2>&1 &
+  >/tmp/mechos-installer-http.log 2>&1 &
 SERVER_PID=$!
 
 cleanup() {
@@ -2350,94 +2357,25 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 sleep 1
-
-for payload in mechos-postinstall-target mechos-rootfs.tar.zst; do
-  curl -fsS "http://127.0.0.1:${PORT}/${payload}" >/dev/null || {
-    echo "ERROR: Local payload server failed for $payload" >&2
-    exit 26
-  }
-done
-echo "Local payload server: PASS"
-
-RUN_CONFIG="/tmp/mechos-archinstall-${SUCCESS_TOKEN}.json"
-python3 - "$CONFIG" "$RUN_CONFIG" "$SUCCESS_TOKEN" <<'PYEOF'
-import json
-import sys
-from pathlib import Path
-
-src = Path(sys.argv[1])
-dst = Path(sys.argv[2])
-token = sys.argv[3]
-
-data = json.loads(src.read_text())
-commands = list(data.get("custom_commands") or [])
-
-# One command fetches and executes the target post-install script. The token is
-# passed as an argument and used only as a loopback success handshake.
-commands = [
-    f"curl -fsSL http://127.0.0.1:45811/mechos-postinstall-target "
-    f"-o /root/mechos-postinstall-target",
-    "chmod 755 /root/mechos-postinstall-target",
-    f"/root/mechos-postinstall-target {token}",
-]
-data["custom_commands"] = commands
-dst.write_text(json.dumps(data, indent=2) + "\n")
-PYEOF
-
-python3 -m json.tool "$RUN_CONFIG" >/dev/null
+curl -fsS "http://127.0.0.1:${PORT}/mechos-postinstall-target" >/dev/null
 
 echo
-echo "Starting Archinstall..."
-echo "Installer log: /var/log/archinstall/install.log"
+echo "Starting guided Archinstall..."
+echo "MechOS post-install integration is loaded."
+if [ "$PRESERVE_HOME" -eq 1 ]; then
+  echo "PRESERVE-HOME MODE: choose Manual partitioning and do not format /home."
+  echo "Review /tmp/mechos-preserve-home-plan.txt if it was created."
+fi
 echo
 
-set +e
-archinstall --config "$RUN_CONFIG"
-ARCH_RC=$?
-set -e
+# Do NOT use --silent. The user still chooses the disk, filesystem,
+# bootloader, username/password and confirms all destructive actions.
+archinstall --config "$CONFIG"
 
 echo
-echo "Archinstall exit code: $ARCH_RC"
-
-if [ "$ARCH_RC" -ne 0 ]; then
-  echo "ERROR: Archinstall failed." >&2
-  /usr/local/bin/mechos-installer-doctor || true
-  exit "$ARCH_RC"
-fi
-
-# Archinstall can return to its menu/exit path without a successful MechOS
-# deployment. Require BOTH Archinstall's success line and our post-install
-# loopback handshake.
-ARCH_OK=0
-if grep -Fq "Installation completed without any errors" /var/log/archinstall/install.log 2>/dev/null; then
-  ARCH_OK=1
-fi
-
-MECHOS_OK=0
-if grep -Fq "/${SUCCESS_TOKEN}" "$HTTPLOG" 2>/dev/null; then
-  MECHOS_OK=1
-fi
-
-if [ "$ARCH_OK" -ne 1 ]; then
-  echo "ERROR: Archinstall did not record a completed installation." >&2
-  /usr/local/bin/mechos-installer-doctor || true
-  exit 27
-fi
-
-if [ "$MECHOS_OK" -ne 1 ]; then
-  echo "ERROR: Base Arch installation completed, but the MechOS deployment did not finish." >&2
-  echo "This usually means the target post-install package/runtime stage failed." >&2
-  /usr/local/bin/mechos-installer-doctor || true
-  exit 28
-fi
-
-echo
-echo "============================================================"
-echo "MECHOS INSTALL COMPLETED"
-echo "Base Arch install: PASS"
-echo "MechOS deployment: PASS"
-echo "You can now reboot into the installed system."
-echo "============================================================"
+echo "Archinstall exited."
+echo "If installation completed successfully, the MechOS post-install"
+echo "stage should have created /var/lib/mechos/installed in the new system."
 EOF
 
 chmod 755 \
@@ -2486,6 +2424,16 @@ cat > /workspace/archlive/airootfs/etc/xdg/autostart/mechos-live-welcome.desktop
 Type=Application
 Name=MechOS Live Welcome
 Exec=/usr/local/bin/mechos-live-welcome
+OnlyShowIn=KDE;
+X-KDE-autostart-after=panel
+Terminal=false
+EOF
+
+cat > /workspace/archlive/airootfs/etc/xdg/autostart/mechos-postinstall.desktop << "EOF"
+[Desktop Entry]
+Type=Application
+Name=MechOS Post-Install
+Exec=/usr/local/bin/mechos-postinstall --first-run
 OnlyShowIn=KDE;
 X-KDE-autostart-after=panel
 Terminal=false
@@ -2714,12 +2662,12 @@ import re
 import subprocess
 import sys
 
-from PyQt6.QtCore import Qt, QSize, QTimer
+from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QRadioButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget, QLineEdit, QComboBox, QPlainTextEdit, QInputDialog
+    QRadioButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget
 )
 
 BRAND = "/usr/share/mechos/branding/mechos-installer-reference.png"
@@ -2801,19 +2749,6 @@ QProgressBar {
 QProgressBar::chunk {
     background: #2d75ff;
     border-radius: 6px;
-}
-QLineEdit, QComboBox {
-    background:#0a1020;
-    border:1px solid #244a75;
-    border-radius:8px;
-    padding:8px;
-}
-QPlainTextEdit {
-    background:#050913;
-    border:1px solid #243a5a;
-    border-radius:8px;
-    padding:8px;
-    color:#bcd8ff;
 }
 QListWidget {
     background: transparent;
@@ -3003,8 +2938,8 @@ class Installer(QMainWindow):
 
         opts = QHBoxLayout()
         self.clean = QRadioButton("Clean Install\nErase selected target and install MechOS")
-        self.keep = QRadioButton("Keep Personal Data\nAdvanced manual layout (opens Archinstall)")
-        self.custom = QRadioButton("Custom Install\nAdvanced partitioning (opens Archinstall)")
+        self.keep = QRadioButton("Keep Personal Data\nPreserve existing /home where supported")
+        self.custom = QRadioButton("Custom Install\nAdvanced/manual partitioning")
         self.clean.setChecked(True)
         self.clean.toggled.connect(lambda v: self.set_mode("clean", v))
         self.keep.toggled.connect(lambda v: self.set_mode("keep", v))
@@ -3015,40 +2950,6 @@ class Installer(QMainWindow):
             pl.addWidget(w)
             opts.addWidget(p)
         center.addLayout(opts)
-
-        account_label = QLabel("USER ACCOUNT")
-        account_label.setObjectName("purple")
-        account_label.setFont(QFont("Sans Serif", 11, QFont.Weight.Bold))
-        center.addWidget(account_label)
-
-        account = self.panel()
-        afl = QGridLayout(account)
-        afl.addWidget(QLabel("Username"),0,0)
-        self.username = QLineEdit("mechos")
-        self.username.setPlaceholderText("username")
-        afl.addWidget(self.username,0,1)
-
-        afl.addWidget(QLabel("Password"),1,0)
-        self.password = QLineEdit()
-        self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password.setPlaceholderText("required")
-        afl.addWidget(self.password,1,1)
-
-        afl.addWidget(QLabel("Confirm"),2,0)
-        self.password2 = QLineEdit()
-        self.password2.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password2.setPlaceholderText("repeat password")
-        afl.addWidget(self.password2,2,1)
-
-        afl.addWidget(QLabel("Hostname"),3,0)
-        self.hostname = QLineEdit("mechos")
-        afl.addWidget(self.hostname,3,1)
-
-        afl.addWidget(QLabel("Filesystem"),4,0)
-        self.filesystem = QComboBox()
-        self.filesystem.addItems(["Btrfs (recommended)", "Ext4"])
-        afl.addWidget(self.filesystem,4,1)
-        center.addWidget(account)
 
         warning = self.panel()
         wl = QHBoxLayout(warning)
@@ -3105,14 +3006,6 @@ class Installer(QMainWindow):
         self.progress.setValue(0)
         self.progress.setFormat("Ready to install")
         ol.addWidget(self.progress)
-        self.install_log = QPlainTextEdit()
-        self.install_log.setReadOnly(True)
-        self.install_log.setMaximumHeight(190)
-        self.install_log.setPlaceholderText("Installation progress will appear here.")
-        ol.addWidget(self.install_log)
-        self.install_process = None
-        self.install_timer = QTimer(self)
-        self.install_timer.timeout.connect(self.refresh_install_progress)
         right.addWidget(overview)
         right.addStretch()
         body.addLayout(right, 2)
@@ -3185,131 +3078,19 @@ class Installer(QMainWindow):
             return
 
         if self.install_mode == "custom":
-            subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-install","--terminal","--preserve-home","--selected-disk",self.selected_disk])
+            subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-install","--terminal","--preserve-home"])
             return
 
-        username = self.username.text().strip()
-        password = self.password.text()
-        password2 = self.password2.text()
-        hostname = self.hostname.text().strip() or "mechos"
-
-        if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,30}", username):
-            QMessageBox.warning(self, "MechOS Installer", "Enter a valid lowercase Linux username.")
-            return
-        if len(password) < 4:
-            QMessageBox.warning(self, "MechOS Installer", "Enter a password of at least 4 characters.")
-            return
-        if password != password2:
-            QMessageBox.warning(self, "MechOS Installer", "The two passwords do not match.")
-            return
-
-        confirm, ok = QInputDialog.getText(
+        answer = QMessageBox.question(
             self,
-            "FINAL DISK CONFIRMATION",
-            f"Clean Install will ERASE ALL DATA on:\n\n{self.selected_disk}\n\n"
-            "Type ERASE to continue:"
+            "Install MechOS",
+            f"Start guided installation for {self.selected_disk or 'the selected target'}?\n\n"
+            "Archinstall will still display the final partition/disk summary and require confirmation before formatting."
         )
-        if not ok or confirm.strip() != "ERASE":
+        if answer != QMessageBox.StandardButton.Yes:
             return
 
-        # Store only a SHA-512 password hash in the ephemeral install plan.
-        try:
-            hp = subprocess.run(
-                ["openssl","passwd","-6","-stdin"],
-                input=password + "\n",
-                text=True,
-                capture_output=True,
-                check=True,
-            )
-            password_hash = hp.stdout.strip()
-        except Exception as e:
-            QMessageBox.warning(self, "MechOS Installer", f"Could not prepare account password: {e}")
-            return
-
-        import json, tempfile
-        fd, plan_path = tempfile.mkstemp(prefix="mechos-install-plan-", suffix=".json")
-        os.close(fd)
-        os.chmod(plan_path, 0o600)
-        filesystem = "btrfs" if self.filesystem.currentIndex() == 0 else "ext4"
-        plan = {
-            "disk": self.selected_disk,
-            "username": username,
-            "password_hash": password_hash,
-            "hostname": hostname,
-            "filesystem": filesystem,
-            "timezone": "UTC",
-        }
-        with open(plan_path, "w") as f:
-            json.dump(plan, f)
-
-        self.progress.setRange(0, 0)
-        self.progress.setFormat("Installing MechOS…")
-        self.install_log.clear()
-        self.install_log.appendPlainText(
-            "Starting fully graphical MechOS clean install.\n"
-            "Do not power off the computer or remove the installation media."
-        )
-
-        self.install_process = subprocess.Popen(
-            ["sudo","-n","/usr/local/bin/mechos-install-graphical","--plan",plan_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        self.install_timer.start(1000)
-
-    def refresh_install_progress(self):
-        log_path = "/var/log/mechos-graphical-install.log"
-        try:
-            if os.path.exists(log_path):
-                text = open(log_path, errors="ignore").read()
-                self.install_log.setPlainText(text[-12000:])
-                cur = self.install_log.textCursor()
-                cur.movePosition(cur.MoveOperation.End)
-                self.install_log.setTextCursor(cur)
-
-                stage_names = {
-                    "preflight":"Checking hardware and network",
-                    "partition":"Preparing selected disk",
-                    "format":"Creating MechOS filesystem",
-                    "base":"Installing Arch base system",
-                    "system-config":"Creating user and system settings",
-                    "bootloader":"Installing bootloader",
-                    "mechos":"Installing MechOS components",
-                    "verify":"Verifying installed system",
-                    "complete":"Installation complete",
-                }
-                stages = re.findall(r"MECHOS_GRAPHICAL_STAGE=([a-z-]+)", text)
-                if stages:
-                    stage = stages[-1]
-                    self.progress.setFormat(stage_names.get(stage, stage))
-
-                if "MECHOS_GRAPHICAL_INSTALL_SUCCESS" in text:
-                    self.install_timer.stop()
-                    self.progress.setRange(0,100)
-                    self.progress.setValue(100)
-                    self.progress.setFormat("MechOS installed successfully")
-                    QMessageBox.information(
-                        self, "MechOS Installation Complete",
-                        "MechOS was installed successfully.\n\n"
-                        "You can now reboot. The installed system should boot into MechScope."
-                    )
-                    return
-        except Exception:
-            pass
-
-        if self.install_process is not None and self.install_process.poll() is not None:
-            rc = self.install_process.returncode
-            self.install_timer.stop()
-            if rc != 0:
-                self.progress.setRange(0,100)
-                self.progress.setValue(0)
-                self.progress.setFormat(f"Install failed (code {rc})")
-                QMessageBox.warning(
-                    self, "MechOS Installation Failed",
-                    "The graphical install backend stopped before completion.\n\n"
-                    "The installer log is shown in this window. You can also run:\n"
-                    "sudo mechos-installer-doctor"
-                )
+        subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-install","--terminal"])
 
     def recovery(self):
         subprocess.Popen(["/usr/local/bin/mechos-recovery-center"])
@@ -3707,31 +3488,6 @@ except Exception as exc:
 CONFIG_DIR = Path.home() / ".config/mechos"
 CONFIG_FILE = CONFIG_DIR / "stream-control.json"
 
-MECHSCOPE_MARKER = Path(
-    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-) / "mechos-mechscope.active"
-
-def mechscope_active():
-    try:
-        pid = int(MECHSCOPE_MARKER.read_text().strip())
-        os.kill(pid, 0)
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
-            "utf-8", "replace"
-        )
-        return "mechscope" in cmdline.lower()
-    except Exception:
-        return False
-
-def require_mechscope():
-    if not mechscope_active():
-        print(
-            "This MechOS feature is available only while MechScope is running.",
-            file=sys.stderr,
-        )
-        raise SystemExit(12)
-
-require_mechscope()
-
 class ObsError(RuntimeError):
     pass
 
@@ -3951,149 +3707,6 @@ if __name__ == "__main__":
 PYEOF
 chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
 
-
-cat > /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize << "PYEOF"
-#!/usr/bin/env python3
-import json
-import os
-import shutil
-import subprocess
-import sys
-from pathlib import Path
-
-STATE = Path.home()/".local/state/mechos/stream-mode.json"
-CONFIG = Path.home()/".config/mechos/stream-optimizer.json"
-
-MECHSCOPE_MARKER = Path(
-    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-) / "mechos-mechscope.active"
-
-def mechscope_active():
-    try:
-        pid = int(MECHSCOPE_MARKER.read_text().strip())
-        os.kill(pid, 0)
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
-            "utf-8", "replace"
-        )
-        return "mechscope" in cmdline.lower()
-    except Exception:
-        return False
-
-def require_mechscope():
-    if not mechscope_active():
-        print(
-            "This MechOS feature is available only while MechScope is running.",
-            file=sys.stderr,
-        )
-        raise SystemExit(12)
-
-require_mechscope()
-
-def run(cmd):
-    try:
-        return subprocess.run(cmd, text=True, capture_output=True, check=False)
-    except Exception:
-        return None
-
-def out(cmd):
-    p=run(cmd)
-    return ((p.stdout or "") if p else "").strip()
-
-def gpu_vendor():
-    s=out(["bash","-lc","lspci | grep -Ei 'VGA|3D|Display' | head -n1"]).lower()
-    if "nvidia" in s:
-        return "nvidia"
-    if "amd" in s or "ati" in s:
-        return "amd"
-    if "intel" in s:
-        return "intel"
-    return "unknown"
-
-def encoder_advice():
-    vendor=gpu_vendor()
-    ffmpeg=out(["bash","-lc","ffmpeg -hide_banner -encoders 2>/dev/null || true"]).lower()
-    options=[]
-
-    if vendor=="nvidia" and ("nvenc" in ffmpeg or Path("/dev/nvidia0").exists()):
-        options.append("NVIDIA hardware encoder detected: prefer NVENC in OBS.")
-    if vendor=="amd":
-        if Path("/dev/dri/renderD128").exists() or "vaapi" in ffmpeg:
-            options.append("AMD render device detected: prefer a supported VAAPI/AMD hardware encoder in OBS.")
-    if vendor=="intel":
-        if Path("/dev/dri/renderD128").exists() or "qsv" in ffmpeg or "vaapi" in ffmpeg:
-            options.append("Intel render device detected: prefer QSV/VAAPI hardware encoding in OBS.")
-    if not options:
-        options.append("No hardware encoder was confirmed automatically. Use OBS Auto-Configuration Wizard before streaming.")
-
-    return {
-        "vendor":vendor,
-        "advice":options,
-        "lowImpactPreset":{
-            "resolution":"1280x720",
-            "fps":60,
-            "bitrateGuide":"4500-6000 Kbps",
-            "encoder":"hardware encoder when available",
-            "notes":[
-                "Prefer a fast/speed-oriented hardware preset.",
-                "Avoid GPU-expensive look-ahead when gaming performance is the priority.",
-                "Keep OBS minimized while live.",
-                "Use a 2-second keyframe interval when required by your streaming service."
-            ]
-        },
-        "balancedPreset":{
-            "resolution":"1920x1080",
-            "fps":60,
-            "bitrateGuide":"6000+ Kbps where your service and connection support it",
-            "encoder":"hardware encoder when available",
-            "notes":[
-                "Use only if game GPU headroom remains comfortable.",
-                "Drop to 720p60 first if the game starts losing frames."
-            ]
-        }
-    }
-
-def save_mode(mode):
-    STATE.parent.mkdir(parents=True,exist_ok=True)
-    STATE.write_text(json.dumps({"mode":mode},indent=2)+"\n")
-
-def enable():
-    # Hardware streaming performs best when the OS is not in a power-saving mode.
-    if shutil.which("powerprofilesctl"):
-        run(["powerprofilesctl","set","performance"])
-
-    # Keep OBS GUI out of the way. This does not kill preview/rendering, but avoids
-    # leaving a large desktop UI over the game session.
-    if shutil.which("wmctrl"):
-        run(["bash","-lc","wmctrl -r 'OBS' -b add,hidden 2>/dev/null || true"])
-
-    # Tell MechOS UIs to reduce noncritical refreshes while streaming.
-    save_mode("low-impact")
-    print("low-impact")
-
-def disable():
-    save_mode("normal")
-    if shutil.which("powerprofilesctl"):
-        run(["powerprofilesctl","set","balanced"])
-    print("normal")
-
-def status():
-    mode="normal"
-    try:
-        mode=json.loads(STATE.read_text()).get("mode","normal")
-    except Exception:
-        pass
-    print(json.dumps({"mode":mode, **encoder_advice()}))
-
-if __name__=="__main__":
-    cmd=sys.argv[1] if len(sys.argv)>1 else "status"
-    if cmd=="enable": enable()
-    elif cmd=="disable": disable()
-    elif cmd=="status": status()
-    elif cmd=="advice": print(json.dumps(encoder_advice()))
-    else: raise SystemExit("Usage: mechos-stream-optimize {enable|disable|status|advice}")
-PYEOF
-chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
-
 cat > /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center << "PYEOF"
 #!/usr/bin/env python3
 import json
@@ -4112,31 +3725,6 @@ from PyQt6.QtWidgets import (
 
 CONTROL="/usr/local/bin/mechos-stream-control"
 CONFIG=Path.home()/".config/mechos/stream-control.json"
-
-MECHSCOPE_MARKER = Path(
-    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-) / "mechos-mechscope.active"
-
-def mechscope_active():
-    try:
-        pid = int(MECHSCOPE_MARKER.read_text().strip())
-        os.kill(pid, 0)
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
-            "utf-8", "replace"
-        )
-        return "mechscope" in cmdline.lower()
-    except Exception:
-        return False
-
-def require_mechscope():
-    if not mechscope_active():
-        print(
-            "This MechOS feature is available only while MechScope is running.",
-            file=sys.stderr,
-        )
-        raise SystemExit(12)
-
-require_mechscope()
 
 STYLE="""
 QWidget{background:#070b14;color:#f4f8ff;font-family:Sans Serif}
@@ -4183,10 +3771,6 @@ class StreamCenter(QMainWindow):
         self.timer.start(2500)
         self.refresh()
 
-    def check_scope(self):
-        if not mechscope_active():
-            self.close()
-
     def panel(self):
         p=QFrame(); p.setObjectName("panel"); return p
 
@@ -4203,20 +3787,6 @@ class StreamCenter(QMainWindow):
         t=QLabel("MECHOS STREAM CENTER"); t.setObjectName("title"); v.addWidget(t)
         s=QLabel("Stream and record from MechScope through OBS Studio.")
         s.setObjectName("muted"); v.addWidget(s)
-
-        optimize=self.panel(); opl=QVBoxLayout(optimize)
-        oph=QLabel("LIGHTWEIGHT STREAMING"); oph.setObjectName("section"); opl.addWidget(oph)
-        self.optimize_status=QLabel("Checking encoder / stream mode…")
-        self.optimize_status.setObjectName("muted")
-        self.optimize_status.setWordWrap(True)
-        opl.addWidget(self.optimize_status)
-        opr=QHBoxLayout()
-        opr.addWidget(self.btn("Enable Low Impact Mode",self.enable_low_impact))
-        opr.addWidget(self.btn("Return to Normal",self.disable_low_impact))
-        opl.addLayout(opr)
-        advice=self.btn("Show Hardware Encoder Advice",self.encoder_advice)
-        opl.addWidget(advice)
-        v.addWidget(optimize)
 
         status=self.panel(); sl=QVBoxLayout(status)
         sh=QLabel("STREAM STATUS"); sh.setObjectName("section"); sl.addWidget(sh)
@@ -4274,63 +3844,11 @@ class StreamCenter(QMainWindow):
         v.addWidget(hot)
         v.addStretch()
 
-    def optimize_call(self,args):
-        return subprocess.run(
-            ["/usr/local/bin/mechos-stream-optimize"]+args,
-            text=True,capture_output=True,timeout=10,check=False
-        )
-
-    def enable_low_impact(self):
-        p=self.optimize_call(["enable"])
-        if p.returncode:
-            self.show_error("Could not enable Low Impact mode",p)
-        self.refresh_optimizer()
-
-    def disable_low_impact(self):
-        p=self.optimize_call(["disable"])
-        if p.returncode:
-            self.show_error("Could not disable Low Impact mode",p)
-        self.refresh_optimizer()
-
-    def encoder_advice(self):
-        p=self.optimize_call(["advice"])
-        if p.returncode:
-            self.show_error("Encoder detection failed",p)
-            return
-        try:
-            data=json.loads(p.stdout)
-            advice="\n".join("• "+x for x in data.get("advice",[]))
-            low=data.get("lowImpactPreset",{})
-            msg=(
-              advice+"\n\nRecommended Low Impact target:\n"
-              f"{low.get('resolution','1280x720')} @ {low.get('fps',60)} FPS\n"
-              f"{low.get('bitrateGuide','')}\n"
-              f"{low.get('encoder','')}"
-            )
-        except Exception:
-            msg=p.stdout
-        QMessageBox.information(self,"MechOS Streaming Encoder Advice",msg)
-
-    def refresh_optimizer(self):
-        p=self.optimize_call(["status"])
-        if p.returncode:
-            self.optimize_status.setText("Low Impact mode status unavailable.")
-            return
-        try:
-            d=json.loads(p.stdout)
-            advice=" ".join(d.get("advice",[]))
-            self.optimize_status.setText(
-              f"Mode: {d.get('mode','normal')}\n{advice}"
-            )
-        except Exception:
-            pass
-
     def show_error(self,prefix,p):
         msg=(p.stderr or p.stdout or "Unknown OBS control error").strip()
         QMessageBox.warning(self,prefix,msg)
 
     def start_stream(self):
-        self.optimize_call(["enable"])
         p=call(["start-stream"])
         if p.returncode:
             self.show_error("Could not start stream",p)
@@ -4338,7 +3856,6 @@ class StreamCenter(QMainWindow):
 
     def stop_stream(self):
         p=call(["stop-stream"])
-        self.optimize_call(["disable"])
         if p.returncode:
             self.show_error("Could not stop stream",p)
         self.refresh()
@@ -4381,7 +3898,6 @@ class StreamCenter(QMainWindow):
         self.refresh()
 
     def refresh(self):
-        self.refresh_optimizer()
         p=call(["status"])
         if p.returncode:
             self.live.setText("OBS CONTROL OFFLINE")
@@ -4437,7 +3953,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
@@ -4445,31 +3961,6 @@ from PyQt6.QtWidgets import (
 )
 
 CONFIG = Path.home() / ".config/MangoHud/MangoHud.conf"
-
-MECHSCOPE_MARKER = Path(
-    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-) / "mechos-mechscope.active"
-
-def mechscope_active():
-    try:
-        pid = int(MECHSCOPE_MARKER.read_text().strip())
-        os.kill(pid, 0)
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
-            "utf-8", "replace"
-        )
-        return "mechscope" in cmdline.lower()
-    except Exception:
-        return False
-
-def require_mechscope():
-    if not mechscope_active():
-        print(
-            "This MechOS feature is available only while MechScope is running.",
-            file=sys.stderr,
-        )
-        raise SystemExit(12)
-
-require_mechscope()
 
 STYLE = """
 QWidget { background:#070b15; color:#eef7ff; font-family:Sans Serif; }
@@ -4549,16 +4040,9 @@ class QuickActions(QMainWindow):
         self.setStyleSheet(STYLE)
         self.setFixedWidth(470)
         self.build()
-        self.scope_timer = QTimer(self)
-        self.scope_timer.timeout.connect(self.check_scope)
-        self.scope_timer.start(1000)
 
         screen = QApplication.primaryScreen().availableGeometry()
         self.setGeometry(screen.right() - self.width() + 1, screen.top(), self.width(), screen.height())
-
-    def check_scope(self):
-        if not mechscope_active():
-            self.close()
 
     def panel(self):
         p = QFrame()
@@ -4634,8 +4118,6 @@ class QuickActions(QMainWindow):
         smr.addWidget(self.button("Stream Center", lambda:spawn(["/usr/local/bin/mechos-stream-center"])),2,0)
         smr.addWidget(self.button("Open OBS", lambda:spawn(["/usr/local/bin/mechos-stream-control","launch-obs"])),2,1)
         sml.addLayout(smr)
-        smr.addWidget(self.button("Low Impact Mode", lambda:spawn(["/usr/local/bin/mechos-stream-optimize","enable"])),3,0)
-        smr.addWidget(self.button("Normal Stream Mode", lambda:spawn(["/usr/local/bin/mechos-stream-optimize","disable"])),3,1)
         stream_note = QLabel("Streaming account/profile stays configured inside OBS Studio.")
         stream_note.setObjectName("muted")
         stream_note.setWordWrap(True)
@@ -4787,31 +4269,6 @@ PIDFILE = Path(f"/tmp/mechos-quick-actions-daemon-{UID}.pid")
 LOG = Path.home()/".local/state/mechos/quick-actions-hotkeys.log"
 LOG.parent.mkdir(parents=True, exist_ok=True)
 
-MECHSCOPE_MARKER = Path(
-    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-) / "mechos-mechscope.active"
-
-def mechscope_active():
-    try:
-        pid = int(MECHSCOPE_MARKER.read_text().strip())
-        os.kill(pid, 0)
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
-            "utf-8", "replace"
-        )
-        return "mechscope" in cmdline.lower()
-    except Exception:
-        return False
-
-def require_mechscope():
-    if not mechscope_active():
-        print(
-            "This MechOS feature is available only while MechScope is running.",
-            file=sys.stderr,
-        )
-        raise SystemExit(12)
-
-require_mechscope()
-
 overlay = None
 devices = {}
 pressed = {}
@@ -4934,9 +4391,6 @@ last_scan = 0.0
 last_trigger = 0.0
 
 while True:
-    if not mechscope_active():
-        cleanup()
-
     now = time.monotonic()
     if now - last_scan > 3.0:
         rescan()
@@ -5035,9 +4489,6 @@ except Exception:
 
 MODE_FILE = f"/tmp/mechos-next-mode-{os.getuid()}"
 FALLBACK = os.environ.get("MECHOS_GAMING_FALLBACK") == "1"
-MECHSCOPE_MARKER = Path(
-    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-) / "mechos-mechscope.active"
 
 STYLE = """
 QWidget { background:#060914; color:#f3f7ff; font-family:Sans Serif; }
@@ -5232,7 +4683,6 @@ class MechScope(QMainWindow):
         self.clock_timer.timeout.connect(self.refresh_stats)
         self.clock_timer.start(2000)
         self.hotkey_daemon = None
-        self.mark_mechscope_active()
         self.start_hotkey_daemon()
         self.refresh_stats()
 
@@ -5513,22 +4963,6 @@ class MechScope(QMainWindow):
         else:
             super().keyPressEvent(event)
 
-    def mark_mechscope_active(self):
-        try:
-            MECHSCOPE_MARKER.parent.mkdir(parents=True, exist_ok=True)
-            MECHSCOPE_MARKER.write_text(str(os.getpid()) + "\n")
-        except Exception:
-            pass
-
-    def cleanup_mechscope_marker(self):
-        try:
-            if MECHSCOPE_MARKER.exists():
-                current = MECHSCOPE_MARKER.read_text().strip()
-                if current == str(os.getpid()):
-                    MECHSCOPE_MARKER.unlink()
-        except Exception:
-            pass
-
     def start_hotkey_daemon(self):
         if not Path("/usr/local/bin/mechos-quick-actions-daemon").exists():
             return
@@ -5547,7 +4981,6 @@ class MechScope(QMainWindow):
                 self.hotkey_daemon.terminate()
             except Exception:
                 pass
-        self.cleanup_mechscope_marker()
         super().closeEvent(event)
 
     def tick(self):
@@ -5572,21 +5005,6 @@ class MechScope(QMainWindow):
             pass
 
     def refresh_stats(self):
-        low_impact = False
-        try:
-            mode_file = Path.home()/".local/state/mechos/stream-mode.json"
-            if mode_file.exists():
-                import json as _json
-                low_impact = _json.loads(mode_file.read_text()).get("mode") == "low-impact"
-        except Exception:
-            low_impact = False
-
-        # Keep system telemetry intentionally light during a live stream.
-        if low_impact:
-            self.clock_timer.setInterval(5000)
-        else:
-            self.clock_timer.setInterval(2000)
-
         self.stats_label.setText(
             f"CPU {cpu_percent()}%   •   RAM {ram_percent()}%   •   DISK {disk_percent()}%"
         )
@@ -5625,7 +5043,6 @@ class MechScope(QMainWindow):
 app = QApplication(sys.argv)
 app.setApplicationName("MechScope 2.0")
 w = MechScope()
-app.aboutToQuit.connect(w.cleanup_mechscope_marker)
 w.showFullScreen()
 sys.exit(app.exec())
 PYEOF
@@ -5966,7 +5383,6 @@ set -euxo pipefail
 
 PORT=45811
 BASE_URL="http://127.0.0.1:${PORT}"
-SUCCESS_TOKEN="${1:-}"
 PAYLOAD="/tmp/mechos-rootfs.tar.zst"
 LOG="/var/log/mechos-postinstall.log"
 
@@ -5980,81 +5396,33 @@ fi
 echo "=== MechOS post-install starting ==="
 
 # Steam and 32-bit gaming libraries need multilib.
-if ! grep -q '^\[multilib\]' /etc/pacman.conf 2>/dev/null; then
-  sed -i \
-    '/^#\[multilib\]/,/^#Include = \/etc\/pacman.d\/mirrorlist/ s/^#//' \
-    /etc/pacman.conf
-
-  if ! grep -q '^\[multilib\]' /etc/pacman.conf; then
-    cat >> /etc/pacman.conf <<'MULTILIBEOF'
-
-[multilib]
-Include = /etc/pacman.d/mirrorlist
-MULTILIBEOF
-  fi
+if grep -q '^\#\[multilib\]' /etc/pacman.conf 2>/dev/null; then
+  sed -i "/^\#\[multilib\]/,/^\#Include = \/etc\/pacman.d\/mirrorlist/ s/^\#//" /etc/pacman.conf
 fi
 
-pacman -Syy --noconfirm
+pacman -Sy --noconfirm
 
-# Install the OS-critical runtime first. Optional creator extras must never
-# prevent a bootable MechOS installation.
-REQUIRED_PACKAGES=(
-  plasma-meta sddm konsole dolphin kdialog
-  networkmanager network-manager-applet bluez bluez-utils
-  pipewire pipewire-alsa pipewire-pulse wireplumber
-  xdg-desktop-portal xdg-desktop-portal-kde
-  steam gamescope lutris gamemode lib32-gamemode
-  mangohud lib32-mangohud wine winetricks protontricks
-  vulkan-tools mesa lib32-mesa
-  vulkan-radeon lib32-vulkan-radeon
-  vulkan-intel lib32-vulkan-intel
-  linux-headers linux-firmware
-  ntfs-3g exfatprogs btrfs-progs dosfstools e2fsprogs f2fs-tools xfsprogs
-  git curl wget unzip zip p7zip sudo flatpak
-  arch-install-scripts grub efibootmgr os-prober
-  python python-pygame python-evdev python-websocket-client python-pyqt6 brightnessctl
-  ffmpeg obs-studio
-  plymouth zram-generator power-profiles-daemon irqbalance cpupower
-  amd-ucode intel-ucode switcheroo-control
-  smartmontools nvme-cli btop pacman-contrib snapper libva-utils pciutils usbutils
-)
-
-missing_required=()
-for pkg in "${REQUIRED_PACKAGES[@]}"; do
-  pacman -Si "$pkg" >/dev/null 2>&1 || missing_required+=("$pkg")
-done
-
-if [ "${#missing_required[@]}" -gt 0 ]; then
-  echo "ERROR: Required MechOS packages are unavailable:" >&2
-  printf '  - %s\n' "${missing_required[@]}" >&2
-  exit 40
-fi
-
-pacman -S --needed --noconfirm "${REQUIRED_PACKAGES[@]}"
-
-# Large creator applications and vendor-specific helpers are useful but not
-# required for the first successful boot. Creator Mode can install/retry them
-# after installation.
-OPTIONAL_PACKAGES=(
-  firefox
-  ark kate
-  git-lfs
-  wine-mono wine-gecko
-  nvidia-prime
-  blender kdenlive krita
-  base-devel cmake ninja clang python-pip
-  gpu-screen-recorder gpu-screen-recorder-ui
-  intel-media-driver libva-mesa-driver
-)
-
-for pkg in "${OPTIONAL_PACKAGES[@]}"; do
-  if pacman -Si "$pkg" >/dev/null 2>&1; then
-    pacman -S --needed --noconfirm "$pkg" || \
-      echo "WARN: Optional package failed and was skipped: $pkg"
-  else
-    echo "WARN: Optional package unavailable and was skipped: $pkg"
-  fi
-done
+# The installed machine gets the same core experience as the live ISO.
+# GPU-specific NVIDIA modules are selected later by mechos-gpu-setup.
+pacman -S --needed --noconfirm \
+  plasma-meta sddm konsole dolphin ark kate kdialog firefox \
+  networkmanager network-manager-applet bluez bluez-utils \
+  pipewire pipewire-alsa pipewire-pulse wireplumber \
+  xdg-desktop-portal xdg-desktop-portal-kde \
+  steam gamescope lutris gamemode lib32-gamemode \
+  mangohud lib32-mangohud wine wine-mono wine-gecko \
+  winetricks protontricks vulkan-tools \
+  mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon \
+  vulkan-intel lib32-vulkan-intel \
+  linux-headers linux-firmware \
+  ntfs-3g exfatprogs btrfs-progs dosfstools e2fsprogs f2fs-tools xfsprogs \
+  git git-lfs curl wget unzip zip p7zip sudo flatpak arch-install-scripts grub efibootmgr os-prober \
+  base-devel cmake ninja clang python python-pip python-pygame python-evdev python-websocket-client python-pyqt6 brightnessctl \
+  ffmpeg blender obs-studio kdenlive krita \
+  plymouth zram-generator power-profiles-daemon irqbalance cpupower \
+  amd-ucode intel-ucode switcheroo-control nvidia-prime \
+  smartmontools nvme-cli btop pacman-contrib snapper libva-utils pciutils usbutils \
+  gpu-screen-recorder gpu-screen-recorder-ui intel-media-driver libva-mesa-driver
 
 curl -fsSL "$BASE_URL/mechos-rootfs.tar.zst" -o "$PAYLOAD"
 tar --zstd -xpf "$PAYLOAD" -C /
@@ -6200,9 +5568,6 @@ touch /var/lib/mechos/installed
 echo "=== MechOS post-install complete ==="
 echo "Installed user: $MECHOS_USER"
 echo "Default session: MechOS Gaming Mode / MechScope"
-if [ -n "$SUCCESS_TOKEN" ]; then
-  curl -sS "$BASE_URL/$SUCCESS_TOKEN" >/dev/null 2>&1 || true
-fi
 TARGETEOF
 chmod 755 /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
 
@@ -6240,14 +5605,14 @@ for f in \
   /usr/local/bin/mechscope \
   /usr/local/bin/mechos-quick-actions \
   /usr/local/bin/mechos-stream-control \
-  /usr/local/bin/mechos-stream-optimize \
   /usr/local/bin/mechos-stream-center \
   /usr/local/bin/mechos-quick-actions-daemon \
   /usr/local/bin/mechos-creator-mode \
   /usr/local/bin/mechos-creator-app \
   /usr/local/libexec/mechos-creator-app-installer \
+  /usr/local/bin/mechos-postinstall \
+  /usr/local/libexec/mechos-gaming-setup-helper \
   /usr/local/bin/mechos-creator-session \
-  /usr/share/applications/mechos-creator-mode.desktop \
   /usr/local/bin/mechos-gaming-session \
   /usr/local/bin/mechos-boot-diagnostics \
   /usr/local/bin/mechos-return-to-mechscope \
@@ -6258,18 +5623,18 @@ for f in \
   /usr/local/bin/mechos-update-helper \
   /usr/local/bin/mechos-update-center \
   /usr/share/applications/mechos-update-center.desktop \
+  /usr/share/applications/mechos-postinstall.desktop \
   /usr/local/bin/mechos-creator-setup \
   /usr/local/bin/mechos-firstboot \
   /usr/local/bin/mechos-recovery-center \
   /usr/local/bin/mechos-recovery-helper \
   /usr/local/bin/mechos-hardware-scan \
-  /usr/local/bin/mechos-installer-doctor \
-  /usr/local/bin/mechos-install-graphical \
   /usr/share/applications/mechscope.desktop \
   /usr/share/applications/mechos-return-to-mechscope.desktop \
   /usr/share/applications/mechos-performance-center.desktop \
   /usr/share/wayland-sessions/mechos-gaming.desktop \
   /usr/share/wayland-sessions/mechos-creator.desktop \
+  /usr/share/mechos/creator-packages \
   /usr/share/mechos/branding \
   /usr/share/plymouth/themes/mechos \
   /usr/share/pixmaps/mechos.png \
@@ -6278,6 +5643,7 @@ for f in \
   /etc/sysctl.d/90-mechos-performance.conf \
   /etc/gamemode.ini \
   /etc/systemd/system/mechos-firstboot.service \
+  /etc/xdg/autostart/mechos-postinstall.desktop \
   /usr/share/doc/mechos
 do
   copy_payload "$f"
@@ -6294,95 +5660,27 @@ test -x /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-pos
 test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/archinstall-mechos.json
 
 
-PAYLOAD_ARCHIVE="/workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst"
-
-payload_has() {
-  local member="$1"
-  tar --zstd -tf "$PAYLOAD_ARCHIVE" "$member" >/dev/null 2>&1
-}
-
-payload_contains() {
-  local member="$1"
-  local needle="$2"
-  local tmp
-  tmp="$(mktemp)"
-  if ! tar --zstd -xOf "$PAYLOAD_ARCHIVE" "$member" > "$tmp" 2>/dev/null; then
-    rm -f "$tmp"
-    return 1
-  fi
-  grep -Fq -- "$needle" "$tmp"
-  local rc=$?
-  rm -f "$tmp"
-  return "$rc"
-}
-
-
-# Quick Actions + streaming are POST-INSTALL ONLY.
-# Their installed-system copies were already staged into mechos-rootfs.tar.zst.
-POSTINSTALL_ONLY_RUNTIME=(
-  /usr/local/bin/mechos-quick-actions
-  /usr/local/bin/mechos-quick-actions-daemon
-  /usr/local/bin/mechos-stream-control
-  /usr/local/bin/mechos-stream-center
-  /usr/local/bin/mechos-stream-optimize
-
-  # Creator Mode is installed-system only.
-  /usr/local/bin/mechos-creator-mode
-  /usr/local/bin/mechos-creator-app
-  /usr/local/libexec/mechos-creator-app-installer
-  /usr/local/bin/mechos-creator-session
-  /usr/local/bin/mechos-creator-setup
-  /usr/share/applications/mechos-creator-mode.desktop
-  /usr/share/wayland-sessions/mechos-creator.desktop
-  /etc/skel/Desktop/Creator-Mode.desktop
-  /home/mechos/Desktop/Creator-Mode.desktop
-  /usr/share/doc/mechos/CREATOR-MODE.txt
-)
-
-# First verify every component exists inside the installed-system payload.
-for f in \
-  usr/local/bin/mechos-quick-actions \
-  usr/local/bin/mechos-quick-actions-daemon \
-  usr/local/bin/mechos-stream-control \
-  usr/local/bin/mechos-stream-center \
-  usr/local/bin/mechos-stream-optimize \
-  usr/local/bin/mechos-creator-mode \
-  usr/local/bin/mechos-creator-app \
-  usr/local/libexec/mechos-creator-app-installer \
-  usr/local/bin/mechos-creator-session \
-  usr/local/bin/mechos-creator-setup \
-  usr/share/applications/mechos-creator-mode.desktop \
-  usr/share/wayland-sessions/mechos-creator.desktop
-do
-  payload_has "./$f" || {
-      echo "ERROR: post-install payload lost $f" >&2
-      exit 1
-    }
-done
-
-# Then remove the active Live ISO copies before SquashFS generation.
-for f in "${POSTINSTALL_ONLY_RUNTIME[@]}"; do
-  rm -f "/workspace/archlive/airootfs$f"
-done
-
-for f in "${POSTINSTALL_ONLY_RUNTIME[@]}"; do
-  test ! -e "/workspace/archlive/airootfs$f"
-done
-
-
 # ArchISO-authoritative permissions. These prevent launchers from
 # losing executable bits inside the final SquashFS image.
 cat >> /workspace/archlive/profiledef.sh << "EOF"
 
+file_permissions["/usr/local/bin/mechos-creator-mode"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-creator-app"]="0:0:755"
+file_permissions["/usr/local/libexec/mechos-creator-app-installer"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-postinstall"]="0:0:755"
+file_permissions["/usr/local/libexec/mechos-gaming-setup-helper"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-creator-session"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-gaming-session"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-boot-diagnostics"]="0:0:755"
 file_permissions["/usr/local/bin/mechscope"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-quick-actions"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-stream-control"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-stream-center"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-quick-actions-daemon"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-return-to-mechscope"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-performance-center"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-firstboot"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-install"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-installer-doctor"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-install-graphical"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-live-welcome"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-live-setup"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-recovery-center"]="0:0:755"
@@ -6394,42 +5692,44 @@ file_permissions["/usr/local/bin/mechos-gpu-setup"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-update"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-update-helper"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-update-center"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-creator-setup"]="0:0:755"
 file_permissions["/usr/share/mechos/install-payload/mechos-postinstall-target"]="0:0:755"
 file_permissions["/usr/share/mechos/install-payload/archinstall-mechos.json"]="0:0:644"
 file_permissions["/usr/share/mechos/install-payload/mechos-rootfs.tar.zst"]="0:0:644"
+file_permissions["/usr/share/mechos/creator-packages/streamer.json"]="0:0:644"
+file_permissions["/usr/share/mechos/creator-packages/graphics.json"]="0:0:644"
+file_permissions["/usr/share/mechos/creator-packages/game-dev.json"]="0:0:644"
+file_permissions["/usr/share/mechos/creator-packages/windows-apps.json"]="0:0:644"
+file_permissions["/usr/share/applications/mechos-postinstall.desktop"]="0:0:644"
+file_permissions["/etc/xdg/autostart/mechos-postinstall.desktop"]="0:0:644"
 file_permissions["/usr/share/mechos/branding/mechos-logo.png"]="0:0:644"
 file_permissions["/etc/sudoers.d/10-mechos-live"]="0:0:440"
 EOF
 
 # Final sanity check before mkarchiso.
 chmod 755 \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session \
   /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session \
   /workspace/archlive/airootfs/usr/local/bin/mechscope \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center \
+  /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon \
   /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope \
   /workspace/archlive/airootfs/usr/local/bin/mechos-performance-center
 chmod 440 /workspace/archlive/airootfs/etc/sudoers.d/10-mechos-live
 
 echo "=== MechOS pre-build validation ==="
-# Creator Mode is post-install-only.
-test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
-test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-creator-app
-test ! -e /workspace/archlive/airootfs/usr/local/libexec/mechos-creator-app-installer
-test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session
-test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-creator-setup
-test ! -e /workspace/archlive/airootfs/usr/share/applications/mechos-creator-mode.desktop
-test ! -e /workspace/archlive/airootfs/usr/share/wayland-sessions/mechos-creator.desktop
-test ! -e /workspace/archlive/airootfs/home/mechos/Desktop/Creator-Mode.desktop
-
-payload_contains "./usr/local/bin/mechos-creator-mode" "CREATOR MODE 2.0"
-payload_contains "./usr/local/bin/mechos-creator-mode" "PROJECT MANAGER"
-payload_contains "./usr/local/bin/mechos-creator-mode" "ASSET BROWSER"
-payload_contains "./usr/local/bin/mechos-creator-mode" "CREATOR MODE PRESETS"
-payload_contains "./usr/local/bin/mechos-creator-app" "com.unity.UnityHub"
-payload_contains "./usr/local/bin/mechos-creator-app" "net.davidotek.pupgui2"
-payload_has "./usr/share/applications/mechos-creator-mode.desktop"
-payload_has "./usr/share/wayland-sessions/mechos-creator.desktop"
-
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-app
+test -x /workspace/archlive/airootfs/usr/local/libexec/mechos-creator-app-installer
+test -s /workspace/archlive/airootfs/usr/share/mechos/branding/mechos-creator-mode-reference.png
+grep -q "1-CLICK INSTALL & COMPATIBILITY" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
+grep -q "com.unity.UnityHub" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-app
+grep -q "net.davidotek.pupgui2" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-app
 grep -q "Session=plasma.desktop" /workspace/archlive/airootfs/etc/sddm.conf.d/mechos.conf
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-boot-diagnostics
 test -L /workspace/archlive/airootfs/etc/systemd/system/NetworkManager-wait-online.service
@@ -6440,47 +5740,30 @@ test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.want
 test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/switcheroo-control.service
 grep -q 'DeviceTimeout=3' /workspace/archlive/airootfs/etc/plymouth/plymouthd.conf
 test -x /workspace/archlive/airootfs/usr/local/bin/mechscope
-# Installed Quick Actions + streaming must be MechScope-only.
-payload_contains "./usr/local/bin/mechos-quick-actions" "require_mechscope"
-payload_contains "./usr/local/bin/mechos-quick-actions-daemon" "require_mechscope"
-payload_contains "./usr/local/bin/mechos-stream-control" "require_mechscope"
-payload_contains "./usr/local/bin/mechos-stream-center" "require_mechscope"
-payload_contains "./usr/local/bin/mechos-stream-optimize" "require_mechscope"
-payload_contains "./usr/local/bin/mechscope" "mechos-mechscope.active"
-
-# Quick Actions + streaming must not ship as active Live ISO binaries.
-test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
-test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon
-test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
-test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
-test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
-
-# They must still be present in the installed-system payload.
-payload_has "./usr/local/bin/mechos-quick-actions"
-payload_has "./usr/local/bin/mechos-quick-actions-daemon"
-payload_has "./usr/local/bin/mechos-stream-control"
-payload_has "./usr/local/bin/mechos-stream-center"
-payload_has "./usr/local/bin/mechos-stream-optimize"
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
+grep -q "StartStream" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
+grep -q "StopStream" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
+grep -q "MECHOS STREAM CENTER" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
+grep -q "Ctrl+Shift+L" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon
+grep -q "MECHOS QUICK ACTIONS" /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
+grep -q "BTN_MODE" /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon
+grep -q "Ctrl+Shift+M" /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
 grep -q -- "--mangoapp" /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session
 grep -q "MECHSCOPE 2.0" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "RECENT LIBRARY" /workspace/archlive/airootfs/usr/local/bin/mechscope
+grep -q "PROJECT MANAGER" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
+grep -q "ASSET BROWSER" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
+grep -q "CREATOR MODE PRESETS" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
+grep -q "CREATOR MODE 2.0" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 grep -q "exec /usr/local/bin/mechos-live-setup" /workspace/archlive/airootfs/usr/local/bin/mechos-live-welcome
 grep -q "MECHSCOPE 2.0" /workspace/archlive/airootfs/usr/share/plymouth/themes/mechos/mechos.script
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-performance-center
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-firstboot
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-install
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-installer-doctor
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical
-grep -q "MECHOS_GRAPHICAL_STAGE=partition" /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical
-grep -q "MECHOS_GRAPHICAL_INSTALL_SUCCESS" /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical
-grep -q "FINAL DISK CONFIRMATION" /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
-grep -q "fully graphical MechOS clean install" /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
-grep -q "MECHOS INSTALLER BACKEND" /workspace/archlive/airootfs/usr/local/bin/mechos-install
-grep -q "SUCCESS_TOKEN" /workspace/archlive/airootfs/usr/local/bin/mechos-install
-grep -q "Installation completed without any errors" /workspace/archlive/airootfs/usr/local/bin/mechos-install
-grep -q "REQUIRED_PACKAGES" /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
-grep -q "OPTIONAL_PACKAGES" /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-live-welcome
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-recovery-center
@@ -6506,6 +5789,7 @@ test -x /workspace/archlive/airootfs/usr/local/bin/mechos-update-center
 test -s /workspace/archlive/airootfs/usr/share/applications/mechos-update-center.desktop
 grep -q 'MECHOS UPDATE CENTER' /workspace/archlive/airootfs/usr/local/bin/mechos-update-center
 grep -q 'checkupdates' /workspace/archlive/airootfs/usr/local/bin/mechos-update-helper
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-setup
 test -x /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
 test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst
 test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/archinstall-mechos.json
@@ -6518,6 +5802,7 @@ test -f /workspace/archlive/airootfs/etc/systemd/zram-generator.conf
 grep -q "Performance Center" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "Update Center" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "mechos-update-center" /workspace/archlive/airootfs/usr/local/bin/mechscope
+grep -q "Update Center" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 grep -q "Steam Library" /workspace/archlive/airootfs/usr/local/bin/mechscope
 test -s /workspace/archlive/airootfs/usr/share/mechos/branding/mechos-logo.png
 test -f /workspace/archlive/airootfs/usr/share/plymouth/themes/mechos/mechos.plymouth
