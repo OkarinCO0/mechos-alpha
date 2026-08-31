@@ -6,6 +6,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: mechos-iso-build
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -20,69 +24,43 @@ jobs:
           sudo rm -rf /usr/local/lib/android || true
           sudo rm -rf /opt/ghc || true
           sudo rm -rf /usr/share/dotnet || true
-          docker system prune -af || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af --volumes || true
           df -h
 
-      - name: Validate current integration
-        run: |
-          set -euo pipefail
-          python3 -m py_compile scripts/patch-mechos-current.py
-          bash -n scripts/mechos-current-integration.sh
-          bash -n scripts/build-mechos-archiso.sh
+      - name: Validate MechOS source
+        run: ./scripts/validate-project.sh
 
       - name: Apply cumulative MechOS integration
         run: |
           set -euo pipefail
           python3 scripts/patch-mechos-current.py scripts/build-mechos-archiso.sh
           bash -n scripts/build-mechos-archiso.sh
-          grep -n 'MECHOS_CURRENT_INTEGRATION_EARLY' scripts/build-mechos-archiso.sh
-          grep -n 'MECHOS_CURRENT_INTEGRATION_LATE' scripts/build-mechos-archiso.sh
-          grep -n 'MECHSCOPE 2.0' scripts/build-mechos-archiso.sh
-          grep -n 'PROJECT MANAGER' scripts/build-mechos-archiso.sh
-          grep -n 'ASSET BROWSER' scripts/build-mechos-archiso.sh
+          test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_EARLY$' scripts/build-mechos-archiso.sh)" -eq 1
+          test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_LATE$' scripts/build-mechos-archiso.sh)" -eq 1
 
       - name: Build MechOS ISO
-        run: |
-          set -euo pipefail
-          docker run --rm --privileged \
-            -v "$PWD:/workspace" \
-            -w /workspace \
-            archlinux:latest \
-            bash /workspace/scripts/build-mechos-archiso.sh
+        run: ./build-iso.sh
 
       - name: Verify ISO and checksum
         run: |
           set -euo pipefail
-
-          # ArchISO is built inside a privileged/root Docker container, so its
-          # output can be owned by root. Return ownership to the GitHub runner
-          # before creating checksum files or uploading artifacts.
-          sudo chown -R "$(id -u):$(id -g)" out
-          chmod -R u+rwX out
-
           ISO="$(find out -maxdepth 2 -type f -name '*.iso' -print -quit)"
           test -n "$ISO"
           test -s "$ISO"
-
-          ISO_DIR="$(dirname "$ISO")"
-          ISO_NAME="$(basename "$ISO")"
-
-          (
-            cd "$ISO_DIR"
-            rm -f "$ISO_NAME.sha256"
-            sha256sum "$ISO_NAME" > "$ISO_NAME.sha256"
-            sha256sum -c "$ISO_NAME.sha256"
-          )
-
           test -s "$ISO.sha256"
-          ls -lh "$ISO" "$ISO.sha256"
+          cd "$(dirname "$ISO")"
+          sha256sum -c "$(basename "$ISO").sha256"
+          ls -lh "$(basename "$ISO")" "$(basename "$ISO").sha256"
 
       - name: Upload MechOS ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MechOS-v0.3.0-RuntimeScopeValidationFix-x86_64
+          name: MechOS-v0.3.0-alpha-x86_64
           path: |
             out/**/*.iso
             out/**/*.iso.sha256
           if-no-files-found: error
           compression-level: 0
+          retention-days: 7

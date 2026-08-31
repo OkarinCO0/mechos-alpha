@@ -1,14 +1,44 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-if [[ $EUID -ne 0 ]]; then exec sudo "$0" "$@"; fi
-if lspci 2>/dev/null | grep -qi nvidia; then
-  echo "[MechOS] NVIDIA GPU detected"
-  dnf -y install akmod-nvidia xorg-x11-drv-nvidia-cuda || {
-    echo "[MechOS] NVIDIA packages unavailable. Check RPM Fusion/nonfree and network." >&2
-    exit 1
-  }
-  grubby --update-kernel=ALL --args='nvidia-drm.modeset=1' || true
-else
-  echo "[MechOS] AMD/Intel graphics path"
-  dnf -y install mesa-dri-drivers mesa-vulkan-drivers vulkan-tools || true
+
+APPLY=0
+[[ "${1:-}" == "--apply" ]] && APPLY=1
+
+GPU_LINES="$(lspci 2>/dev/null | grep -Ei 'VGA|3D|Display' || true)"
+VENDOR=unknown
+PACKAGES=()
+
+if grep -qi nvidia <<<"$GPU_LINES"; then
+  VENDOR=nvidia
+  PACKAGES=(nvidia-open nvidia-utils lib32-nvidia-utils nvidia-prime)
+elif grep -Eqi 'AMD|ATI' <<<"$GPU_LINES"; then
+  VENDOR=amd
+  PACKAGES=(mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon libva-mesa-driver)
+elif grep -qi intel <<<"$GPU_LINES"; then
+  VENDOR=intel
+  PACKAGES=(mesa lib32-mesa vulkan-intel lib32-vulkan-intel intel-media-driver)
 fi
+
+echo 'MechOS GPU setup'
+echo "Vendor: $VENDOR"
+printf '%s\n' "${GPU_LINES:-No display adapter detected}"
+
+[[ "$APPLY" -eq 1 ]] || exit 0
+
+source /usr/local/lib/mechos/runtime.sh
+if mechos_is_live; then
+  echo 'Live ISO detected; bundled drivers were not changed.'
+  exit 0
+fi
+
+[[ "$VENDOR" != unknown ]] || {
+  echo 'No supported GPU vendor was detected.' >&2
+  exit 1
+}
+
+if [[ "$(id -u)" -ne 0 ]]; then
+  exec sudo "$0" --apply
+fi
+
+pacman -Syu --needed --noconfirm "${PACKAGES[@]}"
+echo "GPU packages updated for $VENDOR."

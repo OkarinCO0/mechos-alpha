@@ -1,0 +1,23 @@
+name: Validate MechOS Source
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout MechOS
+        uses: actions/checkout@v4
+
+      - name: Run static validation
+        run: ./scripts/validate-project.sh

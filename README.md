@@ -1,84 +1,60 @@
-# MechOS 0.3.2 Alpha — Graphical Installer ISO Builder
+# MechOS 0.3.0 Alpha — Arch Gaming and Creator ISO
 
-MechOS 0.3.2 changes the end-user installation flow so **installing MechOS requires no terminal commands**.
+MechOS is an Arch Linux-based gaming distribution prototype. Its ISO boots to a KDE Plasma live desktop with the MechOS Setup Center, while installed systems default to the MechScope gaming session.
 
-## End-user flow
+## Live and installation flow
 
-1. Write the compiled MechOS ISO to a USB drive using a graphical USB writer.
-2. Boot the PC from the MechOS USB.
-3. The live environment opens **Welcome to MechOS** automatically.
-4. Choose **Install MechOS to this computer**.
-5. The Fedora 44 Anaconda WebUI installer handles language, keyboard, time zone, user account, and storage graphically.
-6. Reboot when installation is finished.
-7. The installed system performs MechOS first-boot GPU/gaming setup automatically and then uses **MechScope** as its normal gaming session.
+1. Write `MechOS-Arch-Creator-x86_64.iso` to a USB drive or attach it to a virtual machine.
+2. Boot the MechOS live image.
+3. KDE Plasma opens with the MechOS Setup Center.
+4. Choose **Install MechOS** to launch the guided Archinstall interface.
+5. Select and confirm the target disk inside Archinstall. The repository intentionally does not preselect or erase a disk.
+6. Reboot after installation.
+7. First boot validates graphics and services, then MechScope becomes the default gaming session.
 
-No shell commands are part of the user installation path.
-
-## Live USB choices
-
-The graphical welcome screen provides:
-
-- **Install MechOS** — opens the graphical Anaconda WebUI installer.
-- **Try MechOS Desktop Mode** — stays in KDE Plasma.
-- **Start MechScope Gaming Mode** — switches the live session to Gamescope + Steam Gamepad UI when Steam is available.
-- **Shut Down**.
-
-An **Install MechOS** icon is also placed on the live desktop.
-
-## Installed boot flow
-
-```text
-Power on
-  -> MechOS Plymouth boot intro
-  -> SDDM autologin
-  -> MechScope
-  -> Gamescope
-  -> Steam Gamepad / SteamOS-style UI
-```
-
-Desktop Mode remains available through the MechOS/Steam session switch.
+The setup center is graphical. Archinstall itself uses a guided terminal interface so disk selection and its final destructive confirmation remain visible.
 
 ## Included foundation
 
-- Fedora 44 KDE live/installable base
-- Anaconda live installer + Anaconda WebUI
-- MechOS installer branding layer
-- MechScope Gamescope session
-- Steam Gamepad UI bootstrap
-- KDE Plasma Desktop Mode
-- Lutris, GameMode, MangoHud and Vulkan utilities
-- AMD/Intel Mesa stack
-- NVIDIA detection and RPM Fusion driver bootstrap after install
-- 19 MechOS mech-themed wallpapers
-- Plymouth/MechScope artwork
-- Btrfs/Snapper recovery helper
-- Unity Hub, Blender and OBS creator setup
-- Unreal Engine, VRChat tooling and MechClip integration hooks
+- Arch Linux and ArchISO
+- KDE Plasma live and desktop sessions
+- MechScope with Gamescope and Steam Gamepad UI
+- AMD, Intel and NVIDIA graphics packages
+- Lutris, Wine, Winetricks, Protontricks, GameMode and MangoHud
+- GPU Screen Recorder, OBS Studio and Kdenlive
+- Creator Mode package groups for Blender, Krita, game development and Windows applications
+- Post-install center, update center, performance center and recovery helpers
+- Btrfs/Snapper recovery support when the installed filesystem is compatible
+- Nineteen MechOS wallpapers and branded Plymouth assets
 
-## Building the ISO (developer/release step)
+No anti-cheat bypass is included. Game compatibility still depends on each game's Linux and anti-cheat support.
 
-The **release builder** still has to compile the ISO on Fedora 44. These commands are for the person producing MechOS releases, not for someone installing MechOS:
+## Validate the repository
 
 ```bash
-sudo ./scripts/setup-build-host.sh
 ./scripts/validate-project.sh
+```
+
+This checks active files, shell and Python syntax, Arch-specific metadata, patcher idempotency, workflow wiring and wallpaper integrity without building an ISO.
+
+## Build locally
+
+The supported local build path uses a privileged Arch Linux Docker container:
+
+```bash
+./scripts/setup-build-host.sh
 ./build-iso.sh
 ```
 
-Output:
+Allow at least 45 GiB of free space; 70 GiB is recommended. The output is:
 
 ```text
-out/MechOS-0.3.2-alpha-x86_64.iso
-out/MechOS-0.3.2-alpha-x86_64.iso.sha256
+out/MechOS-Arch-Creator-x86_64.iso
+out/MechOS-Arch-Creator-x86_64.iso.sha256
 ```
 
-## Important alpha notes
+## Build with GitHub Actions
 
-- This package is the complete ISO **builder project**, not a precompiled multi-gigabyte Fedora ISO.
-- Steam and proprietary NVIDIA drivers are bootstrapped from RPM Fusion after installation when networking is available; they are not bundled illegally.
-- Unreal Engine, proprietary Unity Editor versions, and Windows-only VRChat Creator Companion are not redistributed in this source bundle.
-- No anti-cheat bypass is included.
+Open **Actions → Build MechOS Arch ISO → Run workflow**. Source validation also runs automatically on pull requests and pushes to `main`.
 
-## Cloud ISO build (0.3.2 packaging revision)
-
-This package also includes `.github/workflows/build-mechos-iso.yml` so the ISO can be compiled in GitHub Actions without installing Fedora on your own PC. See `CLOUD-BUILD.md`.
+See `CLOUD-BUILD.md` and `docs/BUILD-AND-TEST.md` for the complete release test checklist.

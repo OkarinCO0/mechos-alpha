@@ -1,64 +1,51 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
 source /usr/local/lib/mechos/runtime.sh
 mechos_is_live && exit 0
 
+if [[ "$(id -u)" -ne 0 ]]; then
+  exec sudo "$0" "$@"
+fi
+
 STATE=/var/lib/mechos
-mkdir -p "$STATE"
-[[ -e "$STATE/firstboot.done" ]] && exit 0
+MARKER="$STATE/firstboot.done"
+mkdir -p "$STATE" /var/log
+[[ -e "$MARKER" ]] && exit 0
 
-source /etc/os-release
-TARGET_USER="$(getent passwd | awk -F: '$3>=1000 && $3<60000 && $6 ~ /^\/home\// {print $1; exit}')"
-STEAM_READY=0
-NVIDIA_REBOOT=0
+systemctl enable NetworkManager.service 2>/dev/null || true
+systemctl enable bluetooth.service 2>/dev/null || true
+systemctl enable fstrim.timer 2>/dev/null || true
+systemctl enable irqbalance.service 2>/dev/null || true
+systemctl enable power-profiles-daemon.service 2>/dev/null || true
+systemctl enable switcheroo-control.service 2>/dev/null || true
 
-# Steam is installed from RPM Fusion after the OS installation. If networking
-# is unavailable, MechOS stays in Desktop Mode instead of boot-looping Gaming Mode.
-if command -v dnf >/dev/null 2>&1; then
-  dnf -y install \
-    "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${VERSION_ID}.noarch.rpm" \
-    "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${VERSION_ID}.noarch.rpm" || true
-  dnf -y install steam || true
-fi
-[[ -x /usr/bin/steam ]] && STEAM_READY=1
+/usr/local/bin/mechos-gpu-setup --apply > /var/log/mechos-gpu-setup.log 2>&1 || true
+plymouth-set-default-theme -R mechos 2>/dev/null || true
 
-if lspci 2>/dev/null | grep -qi nvidia; then
-  if /usr/local/bin/mechos-gpu-setup; then
-    rpm -q akmod-nvidia >/dev/null 2>&1 && NVIDIA_REBOOT=1
-  fi
-else
-  /usr/local/bin/mechos-gpu-setup || true
-fi
-
-plymouth-set-default-theme -R mechos || true
-
+TARGET_USER="$(awk -F: '$3 >= 1000 && $3 < 60000 && $6 ~ /^\/home\// {print $1; exit}' /etc/passwd)"
 if [[ -n "$TARGET_USER" ]]; then
   TARGET_GROUP="$(id -gn "$TARGET_USER")"
-  install -d -o "$TARGET_USER" -g "$TARGET_GROUP" "/home/$TARGET_USER/.config/mechos"
-  if [[ "$STEAM_READY" -eq 1 ]]; then
-    printf 'gaming\n' > "/home/$TARGET_USER/.config/mechos/session-mode"
-  else
-    printf 'desktop\n' > "/home/$TARGET_USER/.config/mechos/session-mode"
-    touch "$STATE/steam-setup-pending"
-  fi
-  chown "$TARGET_USER:$TARGET_GROUP" "/home/$TARGET_USER/.config/mechos/session-mode"
+  MODE_DIR="/home/$TARGET_USER/.config/mechos"
+  install -d -o "$TARGET_USER" -g "$TARGET_GROUP" "$MODE_DIR"
 
-  cat >/etc/sddm.conf.d/20-mechos-autologin.conf <<AUTO
+  if command -v steam >/dev/null 2>&1 && command -v gamescope >/dev/null 2>&1; then
+    printf 'gaming\n' > "$MODE_DIR/session-mode"
+  else
+    printf 'desktop\n' > "$MODE_DIR/session-mode"
+  fi
+  chown "$TARGET_USER:$TARGET_GROUP" "$MODE_DIR/session-mode"
+
+  SESSION=mechscope.desktop
+  [[ -f /usr/share/wayland-sessions/mechos-gaming.desktop ]] && SESSION=mechos-gaming.desktop
+  mkdir -p /etc/sddm.conf.d
+  cat > /etc/sddm.conf.d/90-mechos-installed.conf <<SDDMEOF
 [Autologin]
 User=$TARGET_USER
-Session=mechscope.desktop
+Session=$SESSION
 Relogin=true
-AUTO
-
-  rm -f "/home/$TARGET_USER/Desktop/mechos-install.desktop" \
-        "/home/$TARGET_USER/Desktop/mechos-live-welcome.desktop" 2>/dev/null || true
+SDDMEOF
 fi
 
-touch "$STATE/firstboot.done"
-
-# NVIDIA's newly installed kernel module is most reliable after one reboot.
-# Do this before SDDM starts; the next boot will skip firstboot and enter MechScope.
-if [[ "$NVIDIA_REBOOT" -eq 1 ]]; then
-  touch "$STATE/nvidia-reboot-completed"
-  systemctl reboot --no-block || true
-fi
+touch "$MARKER"
+echo 'MechOS first-boot setup complete.'

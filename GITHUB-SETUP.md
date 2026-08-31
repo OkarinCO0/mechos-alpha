@@ -1,12 +1,16 @@
-# MechOS GitHub build
+# MechOS GitHub Actions
 
-This repository is prepared for a one-click GitHub Actions build.
+Two workflows are included:
 
-1. Open **Actions** in the repository.
-2. Select **Build MechOS ISO**.
-3. Choose **Run workflow**.
-4. Wait for the build job to finish.
-5. Download the `MechOS-0.3.2-alpha-x86_64` artifact.
-6. Extract the artifact and follow `REASSEMBLE.txt` to reassemble the ISO.
+- **Validate MechOS Source** runs on pull requests, pushes to `main`, and manual dispatch.
+- **Build MechOS Arch ISO** runs only when manually dispatched because a complete ISO build is large and slow.
 
-The workflow builds inside a privileged Fedora 44 container on a GitHub-hosted Ubuntu runner, verifies the generated SHA-256 checksum, and uploads split ISO parts for download.
+## Build an ISO
+
+1. Open **Actions** in `mechgod102-sketch/mechos`.
+2. Select **Build MechOS Arch ISO**.
+3. Select **Run workflow**.
+4. When the build succeeds, download `MechOS-v0.3.0-alpha-x86_64`.
+5. Verify `MechOS-Arch-Creator-x86_64.iso` with the included `.sha256` file.
+
+Do not merge a change when **Validate MechOS Source** is failing. A successful static check does not replace booting and installing the produced ISO in a virtual machine.

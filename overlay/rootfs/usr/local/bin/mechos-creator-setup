@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-if [[ $EUID -ne 0 ]]; then exec sudo "$0" "$@"; fi
 
-cat >/etc/yum.repos.d/unityhub.repo <<'REPO'
-[unityhub]
-name=Unity Hub
-baseurl=https://hub.unity3d.com/linux/repos/rpm/stable
-enabled=1
-gpgcheck=1
-gpgkey=https://hub.unity3d.com/linux/repos/rpm/stable/repodata/repomd.xml.key
-repo_gpgcheck=1
-REPO
+if [[ "$(id -u)" -ne 0 ]]; then
+  exec sudo "$0" "$@"
+fi
 
-dnf -y install unityhub blender obs-studio git git-lfs cmake ninja-build clang lld || true
+pacman -Syu --needed --noconfirm \
+  blender obs-studio kdenlive krita git git-lfs cmake ninja clang python python-pip flatpak
+
+if command -v flatpak >/dev/null 2>&1; then
+  flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo || true
+  flatpak install -y --noninteractive flathub com.unity.UnityHub || true
+fi
+
 cat <<'MSG'
 MechOS Creator Mode is prepared.
-- Unity Hub: installed. Keep VRChat's supported Unity editor separate from Unity 6.
-- Unreal Engine: use Epic's authorized Linux build/source workflow; MechOS does not redistribute it.
-- VRChat Creator Companion: the official GUI is Windows-only; MechOS does not claim native support.
-- Blender and OBS Studio: installed when available from enabled repositories.
+- Unity Hub is installed through Flatpak when available.
+- Keep VRChat's supported Unity editor separate from newer Unity versions.
+- Unreal Engine uses Epic's authorized Linux build/source workflow.
+- VRChat Creator Companion remains Windows-only; MechOS does not claim native support.
+- Blender, OBS Studio, Kdenlive and Krita are installed from Arch repositories.
 MSG

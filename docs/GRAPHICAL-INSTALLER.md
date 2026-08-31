@@ -1,24 +1,27 @@
-# MechOS Graphical Installation Architecture
+# MechOS installation architecture
 
-## Live mode detection
+## Live-mode detection
 
-`/usr/local/lib/mechos/runtime.sh` detects a Fedora live boot using `/run/initramfs/live` and live-kernel command line flags.
+MechOS detects ArchISO through `/run/archiso/bootmnt` and ArchISO kernel-command-line values. Live-only setup and first-boot provisioning therefore do not run on the wrong side of installation.
 
-The same `mechscope.desktop` SDDM session is used on live and installed systems, but `mechscope-session` chooses a different default:
+## Setup Center
 
-- live USB with no user preference -> KDE Desktop Mode
-- installed system with no user preference -> MechScope Gaming Mode
+The PyQt Setup Center opens over KDE Plasma and provides installation, recovery and hardware-scan actions. Closing it leaves the live desktop available.
 
-This prevents the installer USB from dropping directly into Steam while preserving console-like boot behavior after installation.
+## Archinstall handoff
 
-## Welcome UI
+**Install MechOS** starts a guided Archinstall terminal. The partial configuration adds the local MechOS post-install payload but does not select, partition or format a disk. Archinstall displays the disk plan and requires final confirmation.
 
-`mechos-live-welcome` launches automatically in the live KDE session and gives the user graphical choices. `mechos-install` launches Fedora's `liveinst`, which starts the Anaconda WebUI when `anaconda-webui` is present.
+## Installed-system handoff
 
-## Installer branding
+After Archinstall creates the target system, the MechOS post-install stage:
 
-A MechOS branding override is installed under Cockpit's Fedora branding directory. Anaconda WebUI consumes Cockpit branding and `.anaconda` color/logo rules.
-
-## Installed first boot
-
-The existing `mechos-firstboot.service` discovers the newly created normal user, bootstraps Steam/RPM Fusion when network access exists, configures the GPU, sets the MechOS Plymouth theme, writes the gaming-mode preference, and configures SDDM autologin to MechScope.
+- enables multilib;
+- installs the Plasma, gaming, graphics and creator foundation;
+- extracts the installed-system MechOS payload;
+- selects the real desktop user;
+- removes live-only account and autostart files;
+- configures SDDM and MechOS Gaming;
+- enables stable services;
+- applies GPU-specific packages;
+- validates required runtime files before reporting success.
