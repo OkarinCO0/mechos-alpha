@@ -68,7 +68,7 @@ jobs:
       - name: Upload MechOS ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MechOS-v0.3.0-Hotfix-ValidationSync-x86_64
+          name: MechOS-v0.3.0-Hotfix-RecoveryFix-x86_64
           path: |
             out/**/*.iso
             out/**/*.iso.sha256
