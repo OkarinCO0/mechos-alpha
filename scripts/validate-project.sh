@@ -86,6 +86,38 @@ grep -q 'archinstall' "$BASE/scripts/build-mechos-archiso.sh" || fail "Archinsta
 grep -q '/run/archiso/bootmnt' "$ROOT/usr/local/lib/mechos/runtime.sh" || fail "ArchISO live detection is missing"
 grep -qx 'MECHOS_BASE=Arch-Linux' "$ROOT/etc/mechos/mechos.conf" || fail "MechOS base metadata is not Arch Linux"
 
+python3 - "$BASE/scripts/build-mechos-archiso.sh" "$BASE/scripts/mechos-current-integration.sh" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+builder = Path(sys.argv[1]).read_text(encoding="utf-8")
+integration = Path(sys.argv[2]).read_text(encoding="utf-8")
+
+match = re.search(
+    r"POSTINSTALL_ONLY_RUNTIME=\(\n(?P<body>.*?)\n\)",
+    integration,
+    flags=re.DOTALL,
+)
+if not match:
+    raise SystemExit("MechOS validation error: post-install runtime manifest is missing")
+
+members = [line.strip() for line in match.group("body").splitlines() if line.strip()]
+for member in members:
+    staged = f"  /{member} \\\n"
+    if staged not in builder:
+        raise SystemExit(
+            "MechOS validation error: post-install runtime is not staged: " + member
+        )
+
+    permission = f'file_permissions["/{member}"]'
+    if permission in builder:
+        raise SystemExit(
+            "MechOS validation error: post-install-only runtime has Live "
+            "file_permissions entry: " + member
+        )
+PY
+
 for legacy in \
   "$BASE/kiwi/mechos.xml" \
   "$BASE/scripts/patch-fedora-kiwi.py" \
