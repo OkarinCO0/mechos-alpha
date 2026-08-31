@@ -349,6 +349,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QPixmap
@@ -3109,6 +3110,15 @@ chmod 755 \
   /workspace/archlive/airootfs/usr/local/bin/mechos-recovery-center \
   /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
 
+# Compatibility command required by mechos-current-integration.sh final
+# validation. It forwards to the current graphical live installer.
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical << "EOF"
+#!/usr/bin/env bash
+set -euo pipefail
+exec /usr/local/bin/mechos-live-setup "$@"
+EOF
+chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical
+
 cat > /workspace/archlive/airootfs/usr/share/applications/mechos-live-setup.desktop << "EOF"
 [Desktop Entry]
 Type=Application
@@ -4477,8 +4487,9 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QKeyEvent, QPixmap
 from PyQt6.QtWidgets import (
-    QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
-    QMessageBox, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+    QApplication, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QMainWindow, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout,
+    QWidget
 )
 
 try:
@@ -4663,6 +4674,74 @@ class GameButton(QPushButton):
                                            Qt.TransformationMode.SmoothTransformation).size())
         self.clicked.connect(lambda: launch_cb(game))
 
+class UnifiedStore(QDialog):
+    STORES=[
+      ("Steam","Games are purchased and downloaded through Steam.","https://store.steampowered.com/search/?term={query}",["steam","-gamepadui"]),
+      ("Epic Games","Official Epic checkout; downloads are managed by Heroic.","https://store.epicgames.com/browse?q={query}",["flatpak","run","com.heroicgameslauncher.hgl"]),
+      ("GOG","Official GOG checkout; downloads are managed by Heroic.","https://www.gog.com/en/games?query={query}",["flatpak","run","com.heroicgameslauncher.hgl"]),
+      ("Amazon Games","Official Amazon Gaming page; supported downloads are managed by Heroic.","https://gaming.amazon.com/home",["flatpak","run","com.heroicgameslauncher.hgl"]),
+    ]
+
+    def __init__(self,parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("MechScope Unified Store")
+        self.resize(1050,720)
+        self.setStyleSheet(STYLE)
+        outer=QVBoxLayout(self)
+        title=QLabel("UNIFIED STORE"); title.setObjectName("scope"); outer.addWidget(title)
+        note=QLabel("Find games across official stores. Checkout, account authentication and payment stay on each store's official page. Downloads and updates stay inside the authorized launcher.")
+        note.setObjectName("muted"); note.setWordWrap(True); outer.addWidget(note)
+        searchrow=QHBoxLayout()
+        self.search=QLineEdit(); self.search.setPlaceholderText("Search for a game")
+        self.search.returnPressed.connect(self.search_all); searchrow.addWidget(self.search,1)
+        search=QPushButton("Search All Stores"); search.setObjectName("primary"); search.clicked.connect(self.search_all); searchrow.addWidget(search)
+        outer.addLayout(searchrow)
+        grid=QGridLayout(); grid.setSpacing(12)
+        for i,store in enumerate(self.STORES):
+            name,description,url,launcher=store
+            card=QFrame(); card.setObjectName("panel"); layout=QVBoxLayout(card)
+            heading=QLabel(name); heading.setObjectName("section"); layout.addWidget(heading)
+            detail=QLabel(description); detail.setObjectName("muted"); detail.setWordWrap(True); layout.addWidget(detail)
+            browse=QPushButton("Browse / Buy on "+name)
+            browse.clicked.connect(lambda _,u=url:self.open_store(u)); layout.addWidget(browse)
+            downloads=QPushButton("Open Downloads / Library")
+            downloads.clicked.connect(lambda _,c=launcher:self.open_launcher(c)); layout.addWidget(downloads)
+            grid.addWidget(card,i//2,i%2)
+        outer.addLayout(grid)
+        status=QFrame(); status.setObjectName("panel"); sl=QVBoxLayout(status)
+        st=QLabel("DOWNLOAD MANAGEMENT"); st.setObjectName("section"); sl.addWidget(st)
+        info=QLabel("After checkout, open the matching Downloads / Library button and install the game. Return to MechScope and select Refresh Game Library when the launcher finishes.")
+        info.setObjectName("muted"); info.setWordWrap(True); sl.addWidget(info)
+        buttons=QHBoxLayout()
+        refresh=QPushButton("Refresh Game Library"); refresh.clicked.connect(self.refresh_library); buttons.addWidget(refresh)
+        lutris=QPushButton("Open Lutris Imports"); lutris.clicked.connect(lambda:spawn(["lutris"])); buttons.addWidget(lutris)
+        close=QPushButton("Return to MechScope"); close.clicked.connect(self.accept); buttons.addWidget(close)
+        sl.addLayout(buttons); outer.addWidget(status)
+
+    def query(self):
+        return quote_plus(self.search.text().strip())
+
+    def open_store(self,url):
+        target=url.format(query=self.query())
+        spawn(["xdg-open",target])
+
+    def search_all(self):
+        if not self.search.text().strip():
+            QMessageBox.information(self,"Unified Store","Enter a game name first.")
+            return
+        for _,_,url,_ in self.STORES[:3]: self.open_store(url)
+
+    def open_launcher(self,command):
+        if command[0]=="flatpak" and output(["flatpak","info","--user","com.heroicgameslauncher.hgl"])=="":
+            # System-scope Flatpaks are also valid; let Flatpak report any real launch error.
+            pass
+        if spawn(command) is None:
+            QMessageBox.warning(self,"Unified Store","The selected launcher is not installed yet. Install it from Creator Mode App Store.")
+
+    def refresh_library(self):
+        count=len(steam_games())
+        QMessageBox.information(self,"Game Library",f"Library scan completed. {count} installed Steam game(s) detected. Heroic and Lutris continue managing their own downloads.")
+
 class MechScope(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -4748,6 +4827,9 @@ class MechScope(QMainWindow):
         library = self.focus_button(QPushButton("Steam Library"))
         library.clicked.connect(self.open_steam)
         row.addWidget(library)
+        store = self.focus_button(QPushButton("Unified Store"))
+        store.clicked.connect(self.open_store)
+        row.addWidget(store)
         hero_text.addLayout(row)
         hl.addLayout(hero_text, 2)
 
@@ -4814,6 +4896,7 @@ class MechScope(QMainWindow):
         qtitle.setObjectName("section")
         ql.addWidget(qtitle)
         actions = [
+            ("Unified Store", ["/usr/local/bin/mechscope","--store"]),
             ("Quick Actions", ["/usr/local/bin/mechos-quick-actions"]),
             ("Stream Center", ["/usr/local/bin/mechos-stream-center"]),
             ("Go Live", ["/usr/local/bin/mechos-stream-control","start-stream"]),
@@ -5023,6 +5106,10 @@ class MechScope(QMainWindow):
     def open_steam(self):
         spawn(["steam","-gamepadui"])
 
+    def open_store(self):
+        dialog=UnifiedStore(self)
+        dialog.exec()
+
     def open_vr(self):
         # SteamVR app id is 250820. This opens through Steam; actual headset/runtime
         # support remains dependent on SteamVR/Linux and the connected hardware.
@@ -5042,6 +5129,8 @@ class MechScope(QMainWindow):
 
 app = QApplication(sys.argv)
 app.setApplicationName("MechScope 2.0")
+if "--store" in sys.argv:
+    dialog=UnifiedStore(); dialog.showMaximized(); sys.exit(app.exec())
 w = MechScope()
 w.showFullScreen()
 sys.exit(app.exec())
@@ -5683,6 +5772,7 @@ file_permissions["/usr/local/bin/mechos-firstboot"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-install"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-live-welcome"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-live-setup"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-install-graphical"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-recovery-center"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-recovery-helper"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-hardware-scan"]="0:0:755"
@@ -5766,6 +5856,8 @@ test -x /workspace/archlive/airootfs/usr/local/bin/mechos-firstboot
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-install
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-live-welcome
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical
+grep -q 'exec /usr/local/bin/mechos-live-setup' /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-recovery-center
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-recovery-helper
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-hardware-scan
