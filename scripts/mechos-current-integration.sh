@@ -911,7 +911,6 @@ POSTINSTALL_ONLY_RUNTIME=(
   usr/local/bin/mechos-quick-actions-daemon
   usr/local/bin/mechos-stream-control
   usr/local/bin/mechos-stream-center
-  usr/local/bin/mechos-stream-optimize
   usr/local/bin/mechos-creator-mode
   usr/local/bin/mechos-creator-app
   usr/local/libexec/mechos-creator-app-installer
@@ -935,14 +934,18 @@ if [ "$PHASE" = "final" ]; then
     fi
   done
 
-  # These are deliberately absent from Live after payload staging.
-  for name in     mechos-quick-actions     mechos-quick-actions-daemon     mechos-stream-control     mechos-stream-center     mechos-stream-optimize     mechos-creator-mode     mechos-creator-app     mechos-creator-session     mechos-creator-setup; do
-    [ ! -e "$BIN/$name" ] || fail "post-install-only runtime leaked back into Live: $name"
+  # The builder needs these files long enough to create the installed-system
+  # archive. Remove the complete, validated set here so it cannot leak into the
+  # Live SquashFS. Keeping staging and cleanup driven by the same array avoids
+  # adding a new payload member without also cleaning it from the Live image.
+  for member in "${POSTINSTALL_ONLY_RUNTIME[@]}"; do
+    rm -rf -- "$ROOT/$member"
   done
 
-  [ ! -e "$ROOT/usr/local/libexec/mechos-creator-app-installer" ] ||     fail "Creator app installer leaked back into Live"
-  [ ! -e "$APPS/mechos-creator-mode.desktop" ] ||     fail "Creator Mode launcher leaked back into Live"
-  [ ! -e "$ROOT/usr/share/wayland-sessions/mechos-creator.desktop" ] ||     fail "Creator Mode session leaked back into Live"
+  for member in "${POSTINSTALL_ONLY_RUNTIME[@]}"; do
+    [ ! -e "$ROOT/$member" ] \
+      || fail "post-install-only runtime leaked back into Live: $member"
+  done
 fi
 
 if [ "$PHASE" = "final" ]; then
@@ -1106,7 +1109,6 @@ required_installed=(
   /usr/local/bin/mechos-quick-actions-daemon
   /usr/local/bin/mechos-stream-control
   /usr/local/bin/mechos-stream-center
-  /usr/local/bin/mechos-stream-optimize
 )
 
 for path in "${required_installed[@]}"; do
