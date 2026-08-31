@@ -890,9 +890,12 @@ if [ -f "$PROFILE" ] && ! grep -Fq 'file_permissions["/usr/local/bin/mechos-desk
   printf '\nfile_permissions["/usr/local/bin/mechos-desktop-check"]="0:0:755"\n' >> "$PROFILE"
 fi
 
-# Core features that every current/newer MechOS build is expected to retain.
-# We validate rather than overwrite them, so newer implementations stay intact.
-CORE_RUNTIME=(
+# Runtime validation is scope-aware.
+#
+# Live-required tools must remain directly in the final ArchISO rootfs.
+# Post-install-only tools are intentionally removed from the Live rootfs and
+# must instead exist in mechos-rootfs.tar.zst.
+LIVE_CORE_RUNTIME=(
   mechscope
   mechos-gaming-session
   mechos-performance-center
@@ -901,17 +904,45 @@ CORE_RUNTIME=(
   mechos-gpu-setup
   mechos-firstboot
   mechos-install-graphical
-  mechos-quick-actions
-  mechos-quick-actions-daemon
-  mechos-stream-control
-  mechos-stream-center
-  mechos-stream-optimize
+)
+
+POSTINSTALL_ONLY_RUNTIME=(
+  usr/local/bin/mechos-quick-actions
+  usr/local/bin/mechos-quick-actions-daemon
+  usr/local/bin/mechos-stream-control
+  usr/local/bin/mechos-stream-center
+  usr/local/bin/mechos-stream-optimize
+  usr/local/bin/mechos-creator-mode
+  usr/local/bin/mechos-creator-app
+  usr/local/libexec/mechos-creator-app-installer
+  usr/local/bin/mechos-creator-session
+  usr/local/bin/mechos-creator-setup
+  usr/share/applications/mechos-creator-mode.desktop
+  usr/share/wayland-sessions/mechos-creator.desktop
 )
 
 if [ "$PHASE" = "final" ]; then
-  for name in "${CORE_RUNTIME[@]}"; do
-    [ -x "$BIN/$name" ] || fail "current builder lost required core runtime: $name"
+  for name in "${LIVE_CORE_RUNTIME[@]}"; do
+    [ -x "$BIN/$name" ] || fail "current builder lost required LIVE runtime: $name"
   done
+
+  ROOTFS_ARCHIVE="$PAYLOAD/mechos-rootfs.tar.zst"
+  [ -s "$ROOTFS_ARCHIVE" ] || fail "installed-system payload archive is missing"
+
+  for member in "${POSTINSTALL_ONLY_RUNTIME[@]}"; do
+    if ! tar --zstd -tf "$ROOTFS_ARCHIVE" "./$member" >/dev/null 2>&1; then
+      fail "installed-system payload lost required post-install runtime: $member"
+    fi
+  done
+
+  # These are deliberately absent from Live after payload staging.
+  for name in     mechos-quick-actions     mechos-quick-actions-daemon     mechos-stream-control     mechos-stream-center     mechos-stream-optimize     mechos-creator-mode     mechos-creator-app     mechos-creator-session     mechos-creator-setup; do
+    [ ! -e "$BIN/$name" ] || fail "post-install-only runtime leaked back into Live: $name"
+  done
+
+  [ ! -e "$ROOT/usr/local/libexec/mechos-creator-app-installer" ] ||     fail "Creator app installer leaked back into Live"
+  [ ! -e "$APPS/mechos-creator-mode.desktop" ] ||     fail "Creator Mode launcher leaked back into Live"
+  [ ! -e "$ROOT/usr/share/wayland-sessions/mechos-creator.desktop" ] ||     fail "Creator Mode session leaked back into Live"
 fi
 
 if [ "$PHASE" = "final" ]; then
