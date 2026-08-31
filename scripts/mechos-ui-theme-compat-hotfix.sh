@@ -13,9 +13,9 @@ trap 'rc=$?; printf "[MechOS UI Compat] ERROR: line %s failed: %s (exit %s)\n" "
 [ "$PHASE" = "final" ] || exit 0
 [ -d "$ROOT" ] || fail "ArchISO rootfs is missing: $ROOT"
 
-patch_mechscope() {
+patch_mechscope_python() {
   local file="$1"
-  [ -f "$file" ] || fail "MechScope is missing: $file"
+  [ -f "$file" ] || fail "MechScope Python target is missing: $file"
 
   python3 - "$file" <<'PY'
 from pathlib import Path
@@ -69,8 +69,57 @@ PY
   grep -Fq '/usr/share/mechos/theme/mechos-ui.qss' "$file" || fail "MechScope shared theme loader was not installed: $file"
 }
 
+mark_wrapper_for_ui_validation() {
+  local wrapper="$1"
+  [ -f "$wrapper" ] || return 0
+  grep -Fq '# MECHOS_VISUAL_THEME_V1' "$wrapper" && return 0
+
+  # The tutorial/OOBE integration replaces /usr/local/bin/mechscope with a
+  # Bash launcher and keeps the real PyQt application as mechscope.real. The
+  # UI-polish stage still validates the public launcher path, so mark the
+  # wrapper after the real application has been successfully themed.
+  python3 - "$wrapper" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+marker = "# MECHOS_VISUAL_THEME_V1\n"
+lines = text.splitlines(True)
+insert_at = 1 if lines and lines[0].startswith("#!") else 0
+lines.insert(insert_at, marker)
+path.write_text("".join(lines), encoding="utf-8")
+PY
+
+  bash -n "$wrapper"
+  grep -Fq '# MECHOS_VISUAL_THEME_V1' "$wrapper" || fail "MechScope wrapper validation marker was not installed: $wrapper"
+}
+
+patch_tree_mechscope() {
+  local tree="$1"
+  local wrapper="$tree/usr/local/bin/mechscope"
+  local real="$tree/usr/local/bin/mechscope.real"
+  local target="$wrapper"
+
+  [ -f "$wrapper" ] || fail "MechScope launcher is missing: $wrapper"
+
+  # Tutorial integration wraps MechScope before this stage. Theme the real
+  # PyQt implementation when present; otherwise support the unwrapped layout.
+  if [ -f "$real" ]; then
+    target="$real"
+  fi
+
+  patch_mechscope_python "$target"
+
+  if [ "$target" != "$wrapper" ]; then
+    mark_wrapper_for_ui_validation "$wrapper"
+  fi
+
+  log "themed MechScope target: $target"
+}
+
 # Fix the Live copy that the UI-polish stage validates.
-patch_mechscope "$ROOT/usr/local/bin/mechscope"
+patch_tree_mechscope "$ROOT"
 
 # Keep the installed-system payload in sync. UI polish runs immediately after
 # this hotfix and supplies the actual shared QSS file to both trees.
@@ -78,7 +127,7 @@ if [ -s "$ARCHIVE" ]; then
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
   tar --zstd -xf "$ARCHIVE" -C "$tmp"
-  patch_mechscope "$tmp/usr/local/bin/mechscope"
+  patch_tree_mechscope "$tmp"
   new_archive="$ARCHIVE.ui-compat"
   tar --zstd -cpf "$new_archive" -C "$tmp" .
   mv -f "$new_archive" "$ARCHIVE"
@@ -88,4 +137,4 @@ else
   fail "installed-system payload archive is missing: $ARCHIVE"
 fi
 
-log "MechScope shared-theme compatibility patch applied to Live and installed payload"
+log "MechScope shared-theme compatibility patch applied to wrapped/unwrapped Live and installed payloads"
