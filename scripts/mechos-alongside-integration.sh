@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 PHASE="${1:-final}"
 ROOT="/workspace/archlive/airootfs"
@@ -9,10 +9,12 @@ PROFILE="/workspace/archlive/profiledef.sh"
 
 log() { printf '[MechOS Alongside] %s\n' "$*"; }
 fail() { printf '[MechOS Alongside] ERROR: %s\n' "$*" >&2; exit 1; }
+trap 'rc=$?; printf "[MechOS Alongside] ERROR: line %s failed: %s (exit %s)\n" "$LINENO" "$BASH_COMMAND" "$rc" >&2' ERR
 
 [ "$PHASE" = "final" ] || exit 0
 [ -d "$ROOT" ] || fail "ArchISO rootfs is missing: $ROOT"
 [ -f "$BIN/mechos-live-setup" ] || fail "graphical live installer is missing"
+[ -f "$PAYLOAD/mechos-postinstall-target" ] || fail "post-install target is missing"
 
 # ---------------------------------------------------------------------------
 # Read-only dual-boot planning assistant.
@@ -48,6 +50,7 @@ if command -v os-prober >/dev/null 2>&1; then
     echo "  No additional OS was identified by os-prober."
   fi
 else
+  OS_OUTPUT=""
   echo "  os-prober is unavailable; showing filesystems instead."
 fi
 
@@ -127,6 +130,9 @@ chmod 755 "$BIN/mechos-alongside-assistant"
 
 # ---------------------------------------------------------------------------
 # Add a fourth graphical installer choice without replacing the current UI.
+# Use small, stable anchors instead of one large exact multi-line match. The
+# builder has evolved several times, and large text matches made this stage
+# unnecessarily fragile.
 # ---------------------------------------------------------------------------
 python3 - "$BIN/mechos-live-setup" <<'PY'
 from pathlib import Path
@@ -135,75 +141,106 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 marker = "Install Alongside Existing OS"
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise SystemExit(f"[MechOS Alongside] {message}")
+
+
 if marker not in text:
-    old = '''        self.custom = QRadioButton("Custom Install\\
-Advanced/manual partitioning")
-        self.clean.setChecked(True)
-        self.clean.toggled.connect(lambda v: self.set_mode("clean", v))
-        self.keep.toggled.connect(lambda v: self.set_mode("keep", v))
-        self.custom.toggled.connect(lambda v: self.set_mode("custom", v))
-        for w in (self.clean, self.keep, self.custom):'''
-    new = '''        self.custom = QRadioButton("Custom Install\\
-Advanced/manual partitioning")
-        self.alongside = QRadioButton("Install Alongside Existing OS\\
-Guided Windows/Linux dual-boot setup")
-        self.clean.setChecked(True)
-        self.clean.toggled.connect(lambda v: self.set_mode("clean", v))
-        self.keep.toggled.connect(lambda v: self.set_mode("keep", v))
-        self.custom.toggled.connect(lambda v: self.set_mode("custom", v))
-        self.alongside.toggled.connect(lambda v: self.set_mode("alongside", v))
-        for w in (self.clean, self.keep, self.custom, self.alongside):'''
-    if old not in text:
-        raise SystemExit("could not locate installer option block")
-    text = text.replace(old, new, 1)
+    lines = text.splitlines(keepends=True)
 
-    old = 'names = {"clean":"Clean Install","keep":"Keep Personal Data","custom":"Custom Install"}'
-    new = 'names = {"clean":"Clean Install","keep":"Keep Personal Data","custom":"Custom Install","alongside":"Install Alongside Existing OS"}'
-    if old not in text:
-        raise SystemExit("could not locate installer mode-name map")
-    text = text.replace(old, new, 1)
+    # Add the radio button immediately after the Custom Install label. That
+    # label spans two physical source lines because the UI string uses a line
+    # continuation, so insert after its continuation line.
+    custom_index = next(
+        (i for i, line in enumerate(lines) if 'self.custom = QRadioButton("Custom Install' in line),
+        None,
+    )
+    require(custom_index is not None, "could not locate Custom Install radio button")
+    require(custom_index + 1 < len(lines), "Custom Install radio button is truncated")
+    indent = lines[custom_index][: len(lines[custom_index]) - len(lines[custom_index].lstrip())]
+    lines[custom_index + 2:custom_index + 2] = [
+        f'{indent}self.alongside = QRadioButton("Install Alongside Existing OS\\\n',
+        'Guided Windows/Linux dual-boot setup")\n',
+    ]
+    text = "".join(lines)
 
-    old = '''        if mode == "clean":
-            self.warning_text.setText("The selected root/target can be erased. Review Archinstall's final disk summary before confirming.")
-        else:
-            self.warning_text.setText("MechOS will open manual partitioning so existing personal data is never silently formatted.")'''
-    new = '''        if mode == "clean":
-            self.warning_text.setText("The selected root/target can be erased. Review Archinstall's final disk summary before confirming.")
-        elif mode == "alongside":
-            self.warning_text.setText("Alongside mode scans existing systems and guides a dual-boot layout. No partition is resized or formatted automatically.")
-        else:
-            self.warning_text.setText("MechOS will open manual partitioning so existing personal data is never silently formatted.")'''
-    if old not in text:
-        raise SystemExit("could not locate installer warning block")
-    text = text.replace(old, new, 1)
+    toggle_anchor = '        self.custom.toggled.connect(lambda v: self.set_mode("custom", v))\n'
+    require(toggle_anchor in text, "could not locate Custom Install toggle hook")
+    text = text.replace(
+        toggle_anchor,
+        toggle_anchor + '        self.alongside.toggled.connect(lambda v: self.set_mode("alongside", v))\n',
+        1,
+    )
 
-    old = '''        if self.install_mode == "keep":
-            subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-preserve-home"])
-            return
+    row_anchor = '        for w in (self.clean, self.keep, self.custom):\n'
+    require(row_anchor in text, "could not locate installer option row")
+    text = text.replace(
+        row_anchor,
+        '        for w in (self.clean, self.keep, self.custom, self.alongside):\n',
+        1,
+    )
 
-        if self.install_mode == "custom":'''
-    new = '''        if self.install_mode == "alongside":
-            subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-alongside-assistant"])
-            return
+    names_anchor = '        names = {"clean":"Clean Install","keep":"Keep Personal Data","custom":"Custom Install"}\n'
+    require(names_anchor in text, "could not locate installer mode-name map")
+    text = text.replace(
+        names_anchor,
+        '        names = {"clean":"Clean Install","keep":"Keep Personal Data","custom":"Custom Install","alongside":"Install Alongside Existing OS"}\n',
+        1,
+    )
 
-        if self.install_mode == "keep":
-            subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-preserve-home"])
-            return
+    warning_anchor = (
+        '        if mode == "clean":\n'
+        '            self.warning_text.setText("The selected root/target can be erased. Review Archinstall\'s final disk summary before confirming.")\n'
+        '        else:\n'
+    )
+    require(warning_anchor in text, "could not locate installer warning block")
+    text = text.replace(
+        warning_anchor,
+        (
+            '        if mode == "clean":\n'
+            '            self.warning_text.setText("The selected root/target can be erased. Review Archinstall\'s final disk summary before confirming.")\n'
+            '        elif mode == "alongside":\n'
+            '            self.warning_text.setText("Alongside mode scans existing systems and guides a dual-boot layout. No partition is resized or formatted automatically.")\n'
+            '        else:\n'
+        ),
+        1,
+    )
 
-        if self.install_mode == "custom":'''
-    if old not in text:
-        raise SystemExit("could not locate installer launch block")
-    text = text.replace(old, new, 1)
+    keep_anchor = '        if self.install_mode == "keep":\n'
+    require(keep_anchor in text, "could not locate Keep Personal Data launch block")
+    text = text.replace(
+        keep_anchor,
+        (
+            '        if self.install_mode == "alongside":\n'
+            '            subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-alongside-assistant"])\n'
+            '            return\n\n'
+            '        if self.install_mode == "keep":\n'
+        ),
+        1,
+    )
 
     path.write_text(text, encoding="utf-8")
+
+# Validate the exact behavior markers here so a later shell command cannot fail
+# without explaining which part of the UI patch is absent.
+patched = path.read_text(encoding="utf-8")
+for required in (
+    'Install Alongside Existing OS',
+    'self.set_mode("alongside", v)',
+    'mechos-alongside-assistant',
+    '"alongside":"Install Alongside Existing OS"',
+):
+    require(required in patched, f"graphical installer is missing marker: {required}")
 PY
 
 # ---------------------------------------------------------------------------
 # GRUB dual-boot discovery. This is harmless on non-GRUB installs and makes
 # Windows/Linux entries visible automatically when the user selects GRUB.
 # ---------------------------------------------------------------------------
-if [ -f "$PAYLOAD/mechos-postinstall-target" ] && \
-   ! grep -Fq 'MECHOS_ALONGSIDE_BOOTMENU' "$PAYLOAD/mechos-postinstall-target"; then
+if ! grep -Fq 'MECHOS_ALONGSIDE_BOOTMENU' "$PAYLOAD/mechos-postinstall-target"; then
   cat >> "$PAYLOAD/mechos-postinstall-target" <<'POSTEOF'
 
 # MECHOS_ALONGSIDE_BOOTMENU
