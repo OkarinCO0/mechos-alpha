@@ -10,7 +10,7 @@ fail() {
   exit 1
 }
 
-for command_name in bash python3 file sha256sum awk grep find mktemp; do
+for command_name in bash python3 sha256sum awk grep find mktemp; do
   command -v "$command_name" >/dev/null 2>&1 || fail "missing validator command: $command_name"
 done
 
@@ -110,9 +110,66 @@ wallpaper_count="$(find "$wallpaper_dir" -maxdepth 1 -type f -name 'mechos-wallp
 [[ "$wallpaper_count" -eq 19 ]] || fail "expected 19 wallpapers, got $wallpaper_count"
 unique_count="$(sha256sum "$wallpaper_dir"/mechos-wallpaper-*.jpg | awk '{print $1}' | sort -u | wc -l)"
 [[ "$unique_count" -eq 19 ]] || fail "expected 19 distinct wallpapers, got $unique_count"
-for wallpaper in "$wallpaper_dir"/mechos-wallpaper-*.jpg; do
-  file "$wallpaper" | grep -q '1920x1080' || fail "unexpected wallpaper dimensions: $wallpaper"
-done
+python3 - "$wallpaper_dir" <<'PY'
+import pathlib
+import struct
+import sys
+
+
+def jpeg_dimensions(path: pathlib.Path) -> tuple[int, int]:
+    """Read JPEG dimensions without relying on the optional `file` utility."""
+    with path.open("rb") as image:
+        if image.read(2) != b"\xff\xd8":
+            raise ValueError("not a JPEG")
+
+        while True:
+            prefix = image.read(1)
+            if not prefix:
+                raise ValueError("missing start-of-frame marker")
+            if prefix != b"\xff":
+                continue
+
+            marker = image.read(1)
+            while marker == b"\xff":
+                marker = image.read(1)
+            if not marker:
+                raise ValueError("truncated marker")
+            if marker in {b"\xd8", b"\xd9"}:
+                continue
+
+            length_bytes = image.read(2)
+            if len(length_bytes) != 2:
+                raise ValueError("truncated segment")
+            segment_length = struct.unpack(">H", length_bytes)[0]
+            if segment_length < 2:
+                raise ValueError("invalid segment length")
+
+            # SOF markers which contain a sample precision and image dimensions.
+            if marker[0] in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                             0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+                frame = image.read(5)
+                if len(frame) != 5:
+                    raise ValueError("truncated start-of-frame segment")
+                height, width = struct.unpack(">HH", frame[1:])
+                return width, height
+
+            image.seek(segment_length - 2, 1)
+
+
+wallpaper_dir = pathlib.Path(sys.argv[1])
+for wallpaper in sorted(wallpaper_dir.glob("mechos-wallpaper-*.jpg")):
+    try:
+        dimensions = jpeg_dimensions(wallpaper)
+    except (OSError, ValueError, struct.error) as error:
+        raise SystemExit(
+            f"MechOS validation error: invalid wallpaper {wallpaper}: {error}"
+        ) from error
+    if dimensions != (1920, 1080):
+        raise SystemExit(
+            f"MechOS validation error: unexpected wallpaper dimensions: "
+            f"{wallpaper} ({dimensions[0]}x{dimensions[1]})"
+        )
+PY
 
 echo "MechOS 0.3.0 ArchISO static validation passed."
 echo "Wallpapers: $wallpaper_count distinct 1920x1080 images."
