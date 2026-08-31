@@ -677,6 +677,9 @@ PYEOF
 # center is automatically launched. Installed MechOS is still switched to the
 # MechScope Gaming session by the existing post-install stage.
 # ---------------------------------------------------------------------------
+# Preserve the newer branded graphical installer during the final pass.
+# The fallback below is only created early or when no current installer exists.
+if [ "$PHASE" != "final" ] || [ ! -f "$BIN/mechos-live-setup" ] || ! grep -Fq "MECHOS INSTALLER" "$BIN/mechos-live-setup"; then
 cat > "$BIN/mechos-live-setup" <<'PYEOF'
 #!/usr/bin/env python3
 import os
@@ -732,7 +735,6 @@ class SetupCenter(QMainWindow):
         buttons = [
             ("Install MechOS", self.install),
             ("Open MechScope", lambda: launch("/usr/local/bin/mechscope")),
-            ("Creator Mode", lambda: launch("/usr/local/bin/mechos-creator-mode")),
             ("Performance Center", lambda: launch("/usr/local/bin/mechos-performance-center")),
             ("Update Center", lambda: launch("/usr/local/bin/mechos-update-center")),
             ("Recovery Center", lambda: launch("/usr/local/bin/mechos-recovery-center")),
@@ -789,6 +791,7 @@ win = SetupCenter()
 win.show()
 sys.exit(app.exec())
 PYEOF
+fi
 
 # Compatibility wrapper: old callers now open the graphical setup center.
 cat > "$BIN/mechos-live-welcome" <<'EOF'
@@ -1136,12 +1139,21 @@ DESKTOP_LOG="/var/log/mechos-desktop-install.log"
     /usr/local/bin/mechos-performance-center \
     /usr/local/bin/mechos-update-center \
     /usr/local/bin/mechos-gpu-setup \
-    /usr/local/bin/mechos-firstboot; do
+    /usr/local/bin/mechos-firstboot \
+    /usr/local/bin/mechos-creator-mode \
+    /usr/local/bin/mechos-creator-session \
+    /usr/local/bin/mechos-creator-app; do
     test -x "$path" && echo "OK  $path" || echo "MISSING  $path"
   done
   echo
   pacman -Q plasma-desktop plasma-workspace sddm konsole dolphin 2>&1 || true
 } > "$DESKTOP_LOG"
+
+test -x /usr/local/bin/mechos-creator-mode
+test -x /usr/local/bin/mechos-creator-session
+test -x /usr/local/bin/mechos-creator-app
+test -f /usr/share/wayland-sessions/mechos-creator.desktop
+test -f /usr/share/applications/mechos-creator-mode.desktop
 
 touch /var/lib/mechos/desktop-installed
 printf '%s\n' "0.3.0" > /var/lib/mechos/runtime-baseline

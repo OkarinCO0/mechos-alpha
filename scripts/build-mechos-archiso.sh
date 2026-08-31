@@ -75,7 +75,6 @@ grub
 efibootmgr
 os-prober
 git
-git-lfs
 curl
 wget
 unzip
@@ -83,20 +82,10 @@ zip
 p7zip
 sudo
 flatpak
-base-devel
-cmake
-ninja
-clang
 python
-python-pip
 python-pygame
 brightnessctl
 python-pyqt6
-ffmpeg
-blender
-obs-studio
-kdenlive
-krita
 zram-generator
 power-profiles-daemon
 irqbalance
@@ -115,8 +104,6 @@ snapper
 libva-utils
 pciutils
 usbutils
-gpu-screen-recorder
-gpu-screen-recorder-ui
 intel-media-driver
 libva-mesa-driver
 PKGS
@@ -6051,6 +6038,7 @@ pacman -S --needed --noconfirm "${REQUIRED_PACKAGES[@]}"
 OPTIONAL_PACKAGES=(
   firefox
   ark kate
+  git-lfs
   wine-mono wine-gecko
   nvidia-prime
   blender kdenlive krita
@@ -6259,6 +6247,7 @@ for f in \
   /usr/local/bin/mechos-creator-app \
   /usr/local/libexec/mechos-creator-app-installer \
   /usr/local/bin/mechos-creator-session \
+  /usr/share/applications/mechos-creator-mode.desktop \
   /usr/local/bin/mechos-gaming-session \
   /usr/local/bin/mechos-boot-diagnostics \
   /usr/local/bin/mechos-return-to-mechscope \
@@ -6305,6 +6294,29 @@ test -x /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-pos
 test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/archinstall-mechos.json
 
 
+PAYLOAD_ARCHIVE="/workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst"
+
+payload_has() {
+  local member="$1"
+  tar --zstd -tf "$PAYLOAD_ARCHIVE" "$member" >/dev/null 2>&1
+}
+
+payload_contains() {
+  local member="$1"
+  local needle="$2"
+  local tmp
+  tmp="$(mktemp)"
+  if ! tar --zstd -xOf "$PAYLOAD_ARCHIVE" "$member" > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    return 1
+  fi
+  grep -Fq -- "$needle" "$tmp"
+  local rc=$?
+  rm -f "$tmp"
+  return "$rc"
+}
+
+
 # Quick Actions + streaming are POST-INSTALL ONLY.
 # Their installed-system copies were already staged into mechos-rootfs.tar.zst.
 POSTINSTALL_ONLY_RUNTIME=(
@@ -6313,6 +6325,18 @@ POSTINSTALL_ONLY_RUNTIME=(
   /usr/local/bin/mechos-stream-control
   /usr/local/bin/mechos-stream-center
   /usr/local/bin/mechos-stream-optimize
+
+  # Creator Mode is installed-system only.
+  /usr/local/bin/mechos-creator-mode
+  /usr/local/bin/mechos-creator-app
+  /usr/local/libexec/mechos-creator-app-installer
+  /usr/local/bin/mechos-creator-session
+  /usr/local/bin/mechos-creator-setup
+  /usr/share/applications/mechos-creator-mode.desktop
+  /usr/share/wayland-sessions/mechos-creator.desktop
+  /etc/skel/Desktop/Creator-Mode.desktop
+  /home/mechos/Desktop/Creator-Mode.desktop
+  /usr/share/doc/mechos/CREATOR-MODE.txt
 )
 
 # First verify every component exists inside the installed-system payload.
@@ -6321,11 +6345,16 @@ for f in \
   usr/local/bin/mechos-quick-actions-daemon \
   usr/local/bin/mechos-stream-control \
   usr/local/bin/mechos-stream-center \
-  usr/local/bin/mechos-stream-optimize
+  usr/local/bin/mechos-stream-optimize \
+  usr/local/bin/mechos-creator-mode \
+  usr/local/bin/mechos-creator-app \
+  usr/local/libexec/mechos-creator-app-installer \
+  usr/local/bin/mechos-creator-session \
+  usr/local/bin/mechos-creator-setup \
+  usr/share/applications/mechos-creator-mode.desktop \
+  usr/share/wayland-sessions/mechos-creator.desktop
 do
-  tar --zstd -tf \
-    /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst \
-    | grep -Fxq "./$f" || {
+  payload_has "./$f" || {
       echo "ERROR: post-install payload lost $f" >&2
       exit 1
     }
@@ -6345,10 +6374,6 @@ done
 # losing executable bits inside the final SquashFS image.
 cat >> /workspace/archlive/profiledef.sh << "EOF"
 
-file_permissions["/usr/local/bin/mechos-creator-mode"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-creator-app"]="0:0:755"
-file_permissions["/usr/local/libexec/mechos-creator-app-installer"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-creator-session"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-gaming-session"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-boot-diagnostics"]="0:0:755"
 file_permissions["/usr/local/bin/mechscope"]="0:0:755"
@@ -6369,7 +6394,6 @@ file_permissions["/usr/local/bin/mechos-gpu-setup"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-update"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-update-helper"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-update-center"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-creator-setup"]="0:0:755"
 file_permissions["/usr/share/mechos/install-payload/mechos-postinstall-target"]="0:0:755"
 file_permissions["/usr/share/mechos/install-payload/archinstall-mechos.json"]="0:0:644"
 file_permissions["/usr/share/mechos/install-payload/mechos-rootfs.tar.zst"]="0:0:644"
@@ -6379,8 +6403,6 @@ EOF
 
 # Final sanity check before mkarchiso.
 chmod 755 \
-  /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode \
-  /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session \
   /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session \
   /workspace/archlive/airootfs/usr/local/bin/mechscope \
   /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope \
@@ -6388,15 +6410,26 @@ chmod 755 \
 chmod 440 /workspace/archlive/airootfs/etc/sudoers.d/10-mechos-live
 
 echo "=== MechOS pre-build validation ==="
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-app
-test -x /workspace/archlive/airootfs/usr/local/libexec/mechos-creator-app-installer
-test -s /workspace/archlive/airootfs/usr/share/mechos/branding/mechos-creator-mode-reference.png
-grep -q "1-CLICK INSTALL & COMPATIBILITY" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
-grep -q "com.unity.UnityHub" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-app
-grep -q "net.davidotek.pupgui2" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-app
+# Creator Mode is post-install-only.
+test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
+test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-creator-app
+test ! -e /workspace/archlive/airootfs/usr/local/libexec/mechos-creator-app-installer
+test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session
+test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-creator-setup
+test ! -e /workspace/archlive/airootfs/usr/share/applications/mechos-creator-mode.desktop
+test ! -e /workspace/archlive/airootfs/usr/share/wayland-sessions/mechos-creator.desktop
+test ! -e /workspace/archlive/airootfs/home/mechos/Desktop/Creator-Mode.desktop
+
+payload_contains "./usr/local/bin/mechos-creator-mode" "CREATOR MODE 2.0"
+payload_contains "./usr/local/bin/mechos-creator-mode" "PROJECT MANAGER"
+payload_contains "./usr/local/bin/mechos-creator-mode" "ASSET BROWSER"
+payload_contains "./usr/local/bin/mechos-creator-mode" "CREATOR MODE PRESETS"
+payload_contains "./usr/local/bin/mechos-creator-app" "com.unity.UnityHub"
+payload_contains "./usr/local/bin/mechos-creator-app" "net.davidotek.pupgui2"
+payload_has "./usr/share/applications/mechos-creator-mode.desktop"
+payload_has "./usr/share/wayland-sessions/mechos-creator.desktop"
+
 grep -q "Session=plasma.desktop" /workspace/archlive/airootfs/etc/sddm.conf.d/mechos.conf
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-boot-diagnostics
 test -L /workspace/archlive/airootfs/etc/systemd/system/NetworkManager-wait-online.service
@@ -6408,12 +6441,12 @@ test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.want
 grep -q 'DeviceTimeout=3' /workspace/archlive/airootfs/etc/plymouth/plymouthd.conf
 test -x /workspace/archlive/airootfs/usr/local/bin/mechscope
 # Installed Quick Actions + streaming must be MechScope-only.
-tar --zstd -xOf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst ./usr/local/bin/mechos-quick-actions | grep -q "require_mechscope"
-tar --zstd -xOf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst ./usr/local/bin/mechos-quick-actions-daemon | grep -q "require_mechscope"
-tar --zstd -xOf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst ./usr/local/bin/mechos-stream-control | grep -q "require_mechscope"
-tar --zstd -xOf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst ./usr/local/bin/mechos-stream-center | grep -q "require_mechscope"
-tar --zstd -xOf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst ./usr/local/bin/mechos-stream-optimize | grep -q "require_mechscope"
-tar --zstd -xOf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst ./usr/local/bin/mechscope | grep -q "mechos-mechscope.active"
+payload_contains "./usr/local/bin/mechos-quick-actions" "require_mechscope"
+payload_contains "./usr/local/bin/mechos-quick-actions-daemon" "require_mechscope"
+payload_contains "./usr/local/bin/mechos-stream-control" "require_mechscope"
+payload_contains "./usr/local/bin/mechos-stream-center" "require_mechscope"
+payload_contains "./usr/local/bin/mechos-stream-optimize" "require_mechscope"
+payload_contains "./usr/local/bin/mechscope" "mechos-mechscope.active"
 
 # Quick Actions + streaming must not ship as active Live ISO binaries.
 test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
@@ -6423,18 +6456,14 @@ test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
 test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
 
 # They must still be present in the installed-system payload.
-tar --zstd -tf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst | grep -Fxq "./usr/local/bin/mechos-quick-actions"
-tar --zstd -tf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst | grep -Fxq "./usr/local/bin/mechos-quick-actions-daemon"
-tar --zstd -tf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst | grep -Fxq "./usr/local/bin/mechos-stream-control"
-tar --zstd -tf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst | grep -Fxq "./usr/local/bin/mechos-stream-center"
-tar --zstd -tf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst | grep -Fxq "./usr/local/bin/mechos-stream-optimize"
+payload_has "./usr/local/bin/mechos-quick-actions"
+payload_has "./usr/local/bin/mechos-quick-actions-daemon"
+payload_has "./usr/local/bin/mechos-stream-control"
+payload_has "./usr/local/bin/mechos-stream-center"
+payload_has "./usr/local/bin/mechos-stream-optimize"
 grep -q -- "--mangoapp" /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session
 grep -q "MECHSCOPE 2.0" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "RECENT LIBRARY" /workspace/archlive/airootfs/usr/local/bin/mechscope
-grep -q "PROJECT MANAGER" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
-grep -q "ASSET BROWSER" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
-grep -q "CREATOR MODE PRESETS" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
-grep -q "CREATOR MODE 2.0" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 grep -q "exec /usr/local/bin/mechos-live-setup" /workspace/archlive/airootfs/usr/local/bin/mechos-live-welcome
 grep -q "MECHSCOPE 2.0" /workspace/archlive/airootfs/usr/share/plymouth/themes/mechos/mechos.script
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope
@@ -6477,7 +6506,6 @@ test -x /workspace/archlive/airootfs/usr/local/bin/mechos-update-center
 test -s /workspace/archlive/airootfs/usr/share/applications/mechos-update-center.desktop
 grep -q 'MECHOS UPDATE CENTER' /workspace/archlive/airootfs/usr/local/bin/mechos-update-center
 grep -q 'checkupdates' /workspace/archlive/airootfs/usr/local/bin/mechos-update-helper
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-creator-setup
 test -x /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-postinstall-target
 test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst
 test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/archinstall-mechos.json
@@ -6490,7 +6518,6 @@ test -f /workspace/archlive/airootfs/etc/systemd/zram-generator.conf
 grep -q "Performance Center" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "Update Center" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "mechos-update-center" /workspace/archlive/airootfs/usr/local/bin/mechscope
-grep -q "Update Center" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 grep -q "Steam Library" /workspace/archlive/airootfs/usr/local/bin/mechscope
 test -s /workspace/archlive/airootfs/usr/share/mechos/branding/mechos-logo.png
 test -f /workspace/archlive/airootfs/usr/share/plymouth/themes/mechos/mechos.plymouth
