@@ -897,6 +897,7 @@ CORE_RUNTIME=(
   mechos-update-center
   mechos-gpu-setup
   mechos-firstboot
+  mechos-install-graphical
   mechos-quick-actions
   mechos-quick-actions-daemon
   mechos-stream-control
@@ -1066,6 +1067,7 @@ required_installed=(
   /usr/local/bin/mechos-update-center
   /usr/local/bin/mechos-gpu-setup
   /usr/local/bin/mechos-firstboot
+  /usr/local/bin/mechos-install-graphical
   /usr/local/bin/mechos-quick-actions
   /usr/local/bin/mechos-quick-actions-daemon
   /usr/local/bin/mechos-stream-control

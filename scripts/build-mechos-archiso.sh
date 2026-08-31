@@ -69,6 +69,8 @@ xfsprogs
 openssh
 archinstall
 arch-install-scripts
+gptfdisk
+parted
 grub
 efibootmgr
 os-prober
@@ -88,8 +90,6 @@ clang
 python
 python-pip
 python-pygame
-python-evdev
-python-websocket-client
 brightnessctl
 python-pyqt6
 ffmpeg
@@ -684,16 +684,6 @@ class Creator(QMainWindow):
         QMessageBox.information(self,"MechClip AI","MechClip is not installed in a known path yet.")
 
     def metrics(self):
-        try:
-            import json as _json
-            _m = Path.home()/".local/state/mechos/stream-mode.json"
-            if _m.exists() and _json.loads(_m.read_text()).get("mode") == "low-impact":
-                self.timer.setInterval(7000)
-            else:
-                self.timer.setInterval(2500)
-        except Exception:
-            pass
-
         self.cpu.setText("CPU "+(out(["bash","-lc","top -bn1 | awk '/Cpu\\(s\\)/ {printf \"%.0f%%\",100-$8;exit}'"]) or "?"))
         self.ram.setText("RAM "+(out(["bash","-lc","free | awk '/Mem:/ {printf \"%.0f%%\",($3/$2)*100}'"]) or "?"))
         self.vram.setText("VRAM "+vram_text())
@@ -1929,6 +1919,265 @@ fi
 # Apply the cumulative MechOS runtime/installer integration.
 bash /workspace/scripts/mechos-current-integration.sh early
 
+
+cat > /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical << "EOF"
+#!/usr/bin/env bash
+set -euo pipefail
+
+PLAN=""
+LOG="/var/log/mechos-graphical-install.log"
+PAYLOAD="/usr/share/mechos/install-payload"
+PORT=45811
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --plan)
+      PLAN="${2:-}"
+      shift 2
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+[ "$(id -u)" -eq 0 ] || { echo "Must run as root." >&2; exit 3; }
+[ -n "$PLAN" ] && [ -s "$PLAN" ] || { echo "Missing install plan." >&2; exit 4; }
+
+mkdir -p /var/log
+: > "$LOG"
+exec > >(tee -a "$LOG") 2>&1
+
+cleanup() {
+  rm -f "$PLAN" 2>/dev/null || true
+  if [ -n "${SERVER_PID:-}" ]; then
+    kill "$SERVER_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+read_plan() {
+  python3 - "$PLAN" "$1" <<'PYEOF'
+import json,sys
+d=json.load(open(sys.argv[1]))
+v=d.get(sys.argv[2],"")
+if isinstance(v,bool):
+    print("1" if v else "0")
+else:
+    print(v)
+PYEOF
+}
+
+DISK="$(read_plan disk)"
+USERNAME="$(read_plan username)"
+PASSWORD_HASH="$(read_plan password_hash)"
+HOSTNAME="$(read_plan hostname)"
+FILESYSTEM="$(read_plan filesystem)"
+TIMEZONE="$(read_plan timezone)"
+
+[ -b "$DISK" ] || { echo "ERROR: target is not a block device: $DISK"; exit 10; }
+[[ "$USERNAME" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] || { echo "ERROR: invalid username"; exit 11; }
+[ -n "$PASSWORD_HASH" ] || { echo "ERROR: password hash missing"; exit 12; }
+[ -n "$HOSTNAME" ] || HOSTNAME="mechos"
+[ -n "$TIMEZONE" ] || TIMEZONE="UTC"
+case "$FILESYSTEM" in
+  btrfs|ext4) ;;
+  *) FILESYSTEM="btrfs" ;;
+esac
+
+ROOT_PART=""
+BOOT_PART=""
+
+part_path() {
+  local d="$1" n="$2"
+  case "$d" in
+    *nvme*|*mmcblk*) printf '%sp%s\n' "$d" "$n" ;;
+    *) printf '%s%s\n' "$d" "$n" ;;
+  esac
+}
+
+echo "MECHOS_GRAPHICAL_STAGE=preflight"
+echo "Target: $DISK"
+echo "User: $USERNAME"
+echo "Filesystem: $FILESYSTEM"
+echo "Firmware: $([ -d /sys/firmware/efi ] && echo UEFI || echo BIOS)"
+
+for cmd in wipefs parted pacstrap genfstab arch-chroot mkfs.fat; do
+  command -v "$cmd" >/dev/null 2>&1 || {
+    echo "ERROR: required installer command missing: $cmd"
+    exit 13
+  }
+done
+
+if [ "$FILESYSTEM" = "btrfs" ]; then
+  command -v mkfs.btrfs >/dev/null 2>&1 || { echo "ERROR: mkfs.btrfs missing"; exit 14; }
+else
+  command -v mkfs.ext4 >/dev/null 2>&1 || { echo "ERROR: mkfs.ext4 missing"; exit 15; }
+fi
+
+curl -fsSI --connect-timeout 8 --max-time 15 \
+  https://geo.mirror.pkgbuild.com/core/os/x86_64/core.db >/dev/null 2>&1 || {
+    echo "ERROR: No Arch package mirror connection."
+    exit 16
+  }
+
+echo "MECHOS_GRAPHICAL_STAGE=partition"
+
+# From this point forward the selected disk is intentionally destructive.
+swapoff -a 2>/dev/null || true
+umount -R /mnt 2>/dev/null || true
+wipefs -af "$DISK"
+parted -s "$DISK" mklabel gpt
+
+if [ -d /sys/firmware/efi ]; then
+  parted -s "$DISK" mkpart ESP fat32 1MiB 1025MiB
+  parted -s "$DISK" set 1 esp on
+  parted -s "$DISK" mkpart MECHOS 1025MiB 100%
+  BOOT_PART="$(part_path "$DISK" 1)"
+  ROOT_PART="$(part_path "$DISK" 2)"
+  partprobe "$DISK" || true
+  udevadm settle
+  mkfs.fat -F32 -n MECHOS_BOOT "$BOOT_PART"
+else
+  parted -s "$DISK" mkpart BIOSBOOT 1MiB 3MiB
+  parted -s "$DISK" set 1 bios_grub on
+  parted -s "$DISK" mkpart MECHOS 3MiB 100%
+  ROOT_PART="$(part_path "$DISK" 2)"
+  partprobe "$DISK" || true
+  udevadm settle
+fi
+
+echo "MECHOS_GRAPHICAL_STAGE=format"
+
+if [ "$FILESYSTEM" = "btrfs" ]; then
+  mkfs.btrfs -f -L MECHOS_ROOT "$ROOT_PART"
+  mount "$ROOT_PART" /mnt
+  btrfs subvolume create /mnt/@
+  btrfs subvolume create /mnt/@home
+  btrfs subvolume create /mnt/@log
+  btrfs subvolume create /mnt/@pkg
+  umount /mnt
+
+  mount -o subvol=@,compress=zstd "$ROOT_PART" /mnt
+  mkdir -p /mnt/home /mnt/var/log /mnt/var/cache/pacman/pkg
+  mount -o subvol=@home,compress=zstd "$ROOT_PART" /mnt/home
+  mount -o subvol=@log,compress=zstd "$ROOT_PART" /mnt/var/log
+  mount -o subvol=@pkg,compress=zstd "$ROOT_PART" /mnt/var/cache/pacman/pkg
+else
+  mkfs.ext4 -F -L MECHOS_ROOT "$ROOT_PART"
+  mount "$ROOT_PART" /mnt
+fi
+
+if [ -n "$BOOT_PART" ]; then
+  mkdir -p /mnt/boot
+  mount "$BOOT_PART" /mnt/boot
+fi
+
+echo "MECHOS_GRAPHICAL_STAGE=base"
+
+pacstrap -K /mnt \
+  base linux linux-firmware linux-headers \
+  sudo networkmanager curl \
+  grub efibootmgr \
+  btrfs-progs dosfstools e2fsprogs \
+  arch-install-scripts \
+  python
+
+genfstab -U /mnt > /mnt/etc/fstab
+
+echo "MECHOS_GRAPHICAL_STAGE=system-config"
+
+ln -sf "/usr/share/zoneinfo/$TIMEZONE" /mnt/etc/localtime || \
+  ln -sf /usr/share/zoneinfo/UTC /mnt/etc/localtime
+arch-chroot /mnt hwclock --systohc
+
+sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /mnt/etc/locale.gen
+arch-chroot /mnt locale-gen
+printf 'LANG=en_US.UTF-8\n' > /mnt/etc/locale.conf
+printf '%s\n' "$HOSTNAME" > /mnt/etc/hostname
+
+arch-chroot /mnt useradd -m -G wheel,audio,video,storage,input "$USERNAME"
+arch-chroot /mnt usermod -p "$PASSWORD_HASH" "$USERNAME"
+printf '%%wheel ALL=(ALL:ALL) ALL\n' > /mnt/etc/sudoers.d/10-wheel
+chmod 440 /mnt/etc/sudoers.d/10-wheel
+
+arch-chroot /mnt systemctl enable NetworkManager.service
+
+echo "MECHOS_GRAPHICAL_STAGE=bootloader"
+
+if [ -d /sys/firmware/efi ]; then
+  arch-chroot /mnt grub-install \
+    --target=x86_64-efi \
+    --efi-directory=/boot \
+    --bootloader-id=MechOS
+else
+  arch-chroot /mnt grub-install --target=i386-pc "$DISK"
+fi
+arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+
+echo "MECHOS_GRAPHICAL_STAGE=mechos"
+
+for f in mechos-rootfs.tar.zst mechos-postinstall-target; do
+  [ -s "$PAYLOAD/$f" ] || { echo "ERROR: missing MechOS payload: $f"; exit 30; }
+done
+
+python3 -m http.server "$PORT" \
+  --bind 127.0.0.1 \
+  --directory "$PAYLOAD" \
+  >/tmp/mechos-graphical-http.log 2>&1 &
+SERVER_PID=$!
+sleep 1
+
+curl -fsS "http://127.0.0.1:${PORT}/mechos-rootfs.tar.zst" >/dev/null || {
+  echo "ERROR: local MechOS payload server failed"
+  exit 31
+}
+
+SUCCESS_TOKEN="mechos-gui-success-$(date +%s)-$$"
+cp "$PAYLOAD/mechos-postinstall-target" /mnt/root/mechos-postinstall-target
+chmod 755 /mnt/root/mechos-postinstall-target
+
+set +e
+arch-chroot /mnt /root/mechos-postinstall-target "$SUCCESS_TOKEN"
+POST_RC=$?
+set -e
+
+if [ "$POST_RC" -ne 0 ]; then
+  echo "ERROR: MechOS post-install returned code $POST_RC"
+  exit 32
+fi
+
+# The post-install target should have created the final marker.
+[ -f /mnt/var/lib/mechos/installed ] || {
+  echo "ERROR: MechOS installed marker missing"
+  exit 33
+}
+
+echo "MECHOS_GRAPHICAL_STAGE=verify"
+
+required=(
+  /mnt/usr/bin/startplasma-wayland
+  /mnt/usr/bin/sddm
+  /mnt/usr/local/bin/mechscope
+  /mnt/usr/local/bin/mechos-gaming-session
+  /mnt/usr/local/bin/mechos-performance-center
+  /mnt/usr/local/bin/mechos-update-center
+  /mnt/usr/local/bin/mechos-gpu-setup
+  /mnt/usr/local/bin/mechos-firstboot
+)
+
+for f in "${required[@]}"; do
+  [ -e "$f" ] || { echo "ERROR: installed runtime missing: ${f#/mnt}"; exit 34; }
+done
+
+sync
+
+echo "MECHOS_GRAPHICAL_STAGE=complete"
+echo "MECHOS_GRAPHICAL_INSTALL_SUCCESS"
+EOF
+chmod 755 /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical
+
 cat > /workspace/archlive/airootfs/usr/local/bin/mechos-installer-doctor << "EOF"
 #!/usr/bin/env bash
 set +e
@@ -2478,12 +2727,12 @@ import re
 import subprocess
 import sys
 
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QFont, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QRadioButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget
+    QRadioButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget, QLineEdit, QComboBox, QPlainTextEdit, QInputDialog
 )
 
 BRAND = "/usr/share/mechos/branding/mechos-installer-reference.png"
@@ -2565,6 +2814,19 @@ QProgressBar {
 QProgressBar::chunk {
     background: #2d75ff;
     border-radius: 6px;
+}
+QLineEdit, QComboBox {
+    background:#0a1020;
+    border:1px solid #244a75;
+    border-radius:8px;
+    padding:8px;
+}
+QPlainTextEdit {
+    background:#050913;
+    border:1px solid #243a5a;
+    border-radius:8px;
+    padding:8px;
+    color:#bcd8ff;
 }
 QListWidget {
     background: transparent;
@@ -2754,8 +3016,8 @@ class Installer(QMainWindow):
 
         opts = QHBoxLayout()
         self.clean = QRadioButton("Clean Install\nErase selected target and install MechOS")
-        self.keep = QRadioButton("Keep Personal Data\nPreserve existing /home where supported")
-        self.custom = QRadioButton("Custom Install\nAdvanced/manual partitioning")
+        self.keep = QRadioButton("Keep Personal Data\nAdvanced manual layout (opens Archinstall)")
+        self.custom = QRadioButton("Custom Install\nAdvanced partitioning (opens Archinstall)")
         self.clean.setChecked(True)
         self.clean.toggled.connect(lambda v: self.set_mode("clean", v))
         self.keep.toggled.connect(lambda v: self.set_mode("keep", v))
@@ -2766,6 +3028,40 @@ class Installer(QMainWindow):
             pl.addWidget(w)
             opts.addWidget(p)
         center.addLayout(opts)
+
+        account_label = QLabel("USER ACCOUNT")
+        account_label.setObjectName("purple")
+        account_label.setFont(QFont("Sans Serif", 11, QFont.Weight.Bold))
+        center.addWidget(account_label)
+
+        account = self.panel()
+        afl = QGridLayout(account)
+        afl.addWidget(QLabel("Username"),0,0)
+        self.username = QLineEdit("mechos")
+        self.username.setPlaceholderText("username")
+        afl.addWidget(self.username,0,1)
+
+        afl.addWidget(QLabel("Password"),1,0)
+        self.password = QLineEdit()
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password.setPlaceholderText("required")
+        afl.addWidget(self.password,1,1)
+
+        afl.addWidget(QLabel("Confirm"),2,0)
+        self.password2 = QLineEdit()
+        self.password2.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password2.setPlaceholderText("repeat password")
+        afl.addWidget(self.password2,2,1)
+
+        afl.addWidget(QLabel("Hostname"),3,0)
+        self.hostname = QLineEdit("mechos")
+        afl.addWidget(self.hostname,3,1)
+
+        afl.addWidget(QLabel("Filesystem"),4,0)
+        self.filesystem = QComboBox()
+        self.filesystem.addItems(["Btrfs (recommended)", "Ext4"])
+        afl.addWidget(self.filesystem,4,1)
+        center.addWidget(account)
 
         warning = self.panel()
         wl = QHBoxLayout(warning)
@@ -2822,6 +3118,14 @@ class Installer(QMainWindow):
         self.progress.setValue(0)
         self.progress.setFormat("Ready to install")
         ol.addWidget(self.progress)
+        self.install_log = QPlainTextEdit()
+        self.install_log.setReadOnly(True)
+        self.install_log.setMaximumHeight(190)
+        self.install_log.setPlaceholderText("Installation progress will appear here.")
+        ol.addWidget(self.install_log)
+        self.install_process = None
+        self.install_timer = QTimer(self)
+        self.install_timer.timeout.connect(self.refresh_install_progress)
         right.addWidget(overview)
         right.addStretch()
         body.addLayout(right, 2)
@@ -2897,16 +3201,128 @@ class Installer(QMainWindow):
             subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-install","--terminal","--preserve-home","--selected-disk",self.selected_disk])
             return
 
-        answer = QMessageBox.question(
-            self,
-            "Install MechOS",
-            f"Start guided installation for {self.selected_disk or 'the selected target'}?\n\n"
-            "Archinstall will still display the final partition/disk summary and require confirmation before formatting."
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        username = self.username.text().strip()
+        password = self.password.text()
+        password2 = self.password2.text()
+        hostname = self.hostname.text().strip() or "mechos"
+
+        if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,30}", username):
+            QMessageBox.warning(self, "MechOS Installer", "Enter a valid lowercase Linux username.")
+            return
+        if len(password) < 4:
+            QMessageBox.warning(self, "MechOS Installer", "Enter a password of at least 4 characters.")
+            return
+        if password != password2:
+            QMessageBox.warning(self, "MechOS Installer", "The two passwords do not match.")
             return
 
-        subprocess.Popen(["konsole","-e","sudo","/usr/local/bin/mechos-install","--terminal","--selected-disk",self.selected_disk])
+        confirm, ok = QInputDialog.getText(
+            self,
+            "FINAL DISK CONFIRMATION",
+            f"Clean Install will ERASE ALL DATA on:\n\n{self.selected_disk}\n\n"
+            "Type ERASE to continue:"
+        )
+        if not ok or confirm.strip() != "ERASE":
+            return
+
+        # Store only a SHA-512 password hash in the ephemeral install plan.
+        try:
+            hp = subprocess.run(
+                ["openssl","passwd","-6","-stdin"],
+                input=password + "\n",
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            password_hash = hp.stdout.strip()
+        except Exception as e:
+            QMessageBox.warning(self, "MechOS Installer", f"Could not prepare account password: {e}")
+            return
+
+        import json, tempfile
+        fd, plan_path = tempfile.mkstemp(prefix="mechos-install-plan-", suffix=".json")
+        os.close(fd)
+        os.chmod(plan_path, 0o600)
+        filesystem = "btrfs" if self.filesystem.currentIndex() == 0 else "ext4"
+        plan = {
+            "disk": self.selected_disk,
+            "username": username,
+            "password_hash": password_hash,
+            "hostname": hostname,
+            "filesystem": filesystem,
+            "timezone": "UTC",
+        }
+        with open(plan_path, "w") as f:
+            json.dump(plan, f)
+
+        self.progress.setRange(0, 0)
+        self.progress.setFormat("Installing MechOS…")
+        self.install_log.clear()
+        self.install_log.appendPlainText(
+            "Starting fully graphical MechOS clean install.\n"
+            "Do not power off the computer or remove the installation media."
+        )
+
+        self.install_process = subprocess.Popen(
+            ["sudo","-n","/usr/local/bin/mechos-install-graphical","--plan",plan_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.install_timer.start(1000)
+
+    def refresh_install_progress(self):
+        log_path = "/var/log/mechos-graphical-install.log"
+        try:
+            if os.path.exists(log_path):
+                text = open(log_path, errors="ignore").read()
+                self.install_log.setPlainText(text[-12000:])
+                cur = self.install_log.textCursor()
+                cur.movePosition(cur.MoveOperation.End)
+                self.install_log.setTextCursor(cur)
+
+                stage_names = {
+                    "preflight":"Checking hardware and network",
+                    "partition":"Preparing selected disk",
+                    "format":"Creating MechOS filesystem",
+                    "base":"Installing Arch base system",
+                    "system-config":"Creating user and system settings",
+                    "bootloader":"Installing bootloader",
+                    "mechos":"Installing MechOS components",
+                    "verify":"Verifying installed system",
+                    "complete":"Installation complete",
+                }
+                stages = re.findall(r"MECHOS_GRAPHICAL_STAGE=([a-z-]+)", text)
+                if stages:
+                    stage = stages[-1]
+                    self.progress.setFormat(stage_names.get(stage, stage))
+
+                if "MECHOS_GRAPHICAL_INSTALL_SUCCESS" in text:
+                    self.install_timer.stop()
+                    self.progress.setRange(0,100)
+                    self.progress.setValue(100)
+                    self.progress.setFormat("MechOS installed successfully")
+                    QMessageBox.information(
+                        self, "MechOS Installation Complete",
+                        "MechOS was installed successfully.\n\n"
+                        "You can now reboot. The installed system should boot into MechScope."
+                    )
+                    return
+        except Exception:
+            pass
+
+        if self.install_process is not None and self.install_process.poll() is not None:
+            rc = self.install_process.returncode
+            self.install_timer.stop()
+            if rc != 0:
+                self.progress.setRange(0,100)
+                self.progress.setValue(0)
+                self.progress.setFormat(f"Install failed (code {rc})")
+                QMessageBox.warning(
+                    self, "MechOS Installation Failed",
+                    "The graphical install backend stopped before completion.\n\n"
+                    "The installer log is shown in this window. You can also run:\n"
+                    "sudo mechos-installer-doctor"
+                )
 
     def recovery(self):
         subprocess.Popen(["/usr/local/bin/mechos-recovery-center"])
@@ -3304,6 +3720,31 @@ except Exception as exc:
 CONFIG_DIR = Path.home() / ".config/mechos"
 CONFIG_FILE = CONFIG_DIR / "stream-control.json"
 
+MECHSCOPE_MARKER = Path(
+    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+) / "mechos-mechscope.active"
+
+def mechscope_active():
+    try:
+        pid = int(MECHSCOPE_MARKER.read_text().strip())
+        os.kill(pid, 0)
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
+            "utf-8", "replace"
+        )
+        return "mechscope" in cmdline.lower()
+    except Exception:
+        return False
+
+def require_mechscope():
+    if not mechscope_active():
+        print(
+            "This MechOS feature is available only while MechScope is running.",
+            file=sys.stderr,
+        )
+        raise SystemExit(12)
+
+require_mechscope()
+
 class ObsError(RuntimeError):
     pass
 
@@ -3536,6 +3977,31 @@ from pathlib import Path
 STATE = Path.home()/".local/state/mechos/stream-mode.json"
 CONFIG = Path.home()/".config/mechos/stream-optimizer.json"
 
+MECHSCOPE_MARKER = Path(
+    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+) / "mechos-mechscope.active"
+
+def mechscope_active():
+    try:
+        pid = int(MECHSCOPE_MARKER.read_text().strip())
+        os.kill(pid, 0)
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
+            "utf-8", "replace"
+        )
+        return "mechscope" in cmdline.lower()
+    except Exception:
+        return False
+
+def require_mechscope():
+    if not mechscope_active():
+        print(
+            "This MechOS feature is available only while MechScope is running.",
+            file=sys.stderr,
+        )
+        raise SystemExit(12)
+
+require_mechscope()
+
 def run(cmd):
     try:
         return subprocess.run(cmd, text=True, capture_output=True, check=False)
@@ -3660,6 +4126,31 @@ from PyQt6.QtWidgets import (
 CONTROL="/usr/local/bin/mechos-stream-control"
 CONFIG=Path.home()/".config/mechos/stream-control.json"
 
+MECHSCOPE_MARKER = Path(
+    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+) / "mechos-mechscope.active"
+
+def mechscope_active():
+    try:
+        pid = int(MECHSCOPE_MARKER.read_text().strip())
+        os.kill(pid, 0)
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
+            "utf-8", "replace"
+        )
+        return "mechscope" in cmdline.lower()
+    except Exception:
+        return False
+
+def require_mechscope():
+    if not mechscope_active():
+        print(
+            "This MechOS feature is available only while MechScope is running.",
+            file=sys.stderr,
+        )
+        raise SystemExit(12)
+
+require_mechscope()
+
 STYLE="""
 QWidget{background:#070b14;color:#f4f8ff;font-family:Sans Serif}
 QFrame#panel{background:#0d1524;border:1px solid #294b70;border-radius:12px}
@@ -3704,6 +4195,10 @@ class StreamCenter(QMainWindow):
         self.timer.timeout.connect(self.refresh)
         self.timer.start(2500)
         self.refresh()
+
+    def check_scope(self):
+        if not mechscope_active():
+            self.close()
 
     def panel(self):
         p=QFrame(); p.setObjectName("panel"); return p
@@ -3955,7 +4450,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
@@ -3963,6 +4458,31 @@ from PyQt6.QtWidgets import (
 )
 
 CONFIG = Path.home() / ".config/MangoHud/MangoHud.conf"
+
+MECHSCOPE_MARKER = Path(
+    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+) / "mechos-mechscope.active"
+
+def mechscope_active():
+    try:
+        pid = int(MECHSCOPE_MARKER.read_text().strip())
+        os.kill(pid, 0)
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
+            "utf-8", "replace"
+        )
+        return "mechscope" in cmdline.lower()
+    except Exception:
+        return False
+
+def require_mechscope():
+    if not mechscope_active():
+        print(
+            "This MechOS feature is available only while MechScope is running.",
+            file=sys.stderr,
+        )
+        raise SystemExit(12)
+
+require_mechscope()
 
 STYLE = """
 QWidget { background:#070b15; color:#eef7ff; font-family:Sans Serif; }
@@ -4042,9 +4562,16 @@ class QuickActions(QMainWindow):
         self.setStyleSheet(STYLE)
         self.setFixedWidth(470)
         self.build()
+        self.scope_timer = QTimer(self)
+        self.scope_timer.timeout.connect(self.check_scope)
+        self.scope_timer.start(1000)
 
         screen = QApplication.primaryScreen().availableGeometry()
         self.setGeometry(screen.right() - self.width() + 1, screen.top(), self.width(), screen.height())
+
+    def check_scope(self):
+        if not mechscope_active():
+            self.close()
 
     def panel(self):
         p = QFrame()
@@ -4273,6 +4800,31 @@ PIDFILE = Path(f"/tmp/mechos-quick-actions-daemon-{UID}.pid")
 LOG = Path.home()/".local/state/mechos/quick-actions-hotkeys.log"
 LOG.parent.mkdir(parents=True, exist_ok=True)
 
+MECHSCOPE_MARKER = Path(
+    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+) / "mechos-mechscope.active"
+
+def mechscope_active():
+    try:
+        pid = int(MECHSCOPE_MARKER.read_text().strip())
+        os.kill(pid, 0)
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
+            "utf-8", "replace"
+        )
+        return "mechscope" in cmdline.lower()
+    except Exception:
+        return False
+
+def require_mechscope():
+    if not mechscope_active():
+        print(
+            "This MechOS feature is available only while MechScope is running.",
+            file=sys.stderr,
+        )
+        raise SystemExit(12)
+
+require_mechscope()
+
 overlay = None
 devices = {}
 pressed = {}
@@ -4395,6 +4947,9 @@ last_scan = 0.0
 last_trigger = 0.0
 
 while True:
+    if not mechscope_active():
+        cleanup()
+
     now = time.monotonic()
     if now - last_scan > 3.0:
         rescan()
@@ -4493,6 +5048,9 @@ except Exception:
 
 MODE_FILE = f"/tmp/mechos-next-mode-{os.getuid()}"
 FALLBACK = os.environ.get("MECHOS_GAMING_FALLBACK") == "1"
+MECHSCOPE_MARKER = Path(
+    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+) / "mechos-mechscope.active"
 
 STYLE = """
 QWidget { background:#060914; color:#f3f7ff; font-family:Sans Serif; }
@@ -4687,6 +5245,7 @@ class MechScope(QMainWindow):
         self.clock_timer.timeout.connect(self.refresh_stats)
         self.clock_timer.start(2000)
         self.hotkey_daemon = None
+        self.mark_mechscope_active()
         self.start_hotkey_daemon()
         self.refresh_stats()
 
@@ -4967,6 +5526,22 @@ class MechScope(QMainWindow):
         else:
             super().keyPressEvent(event)
 
+    def mark_mechscope_active(self):
+        try:
+            MECHSCOPE_MARKER.parent.mkdir(parents=True, exist_ok=True)
+            MECHSCOPE_MARKER.write_text(str(os.getpid()) + "\n")
+        except Exception:
+            pass
+
+    def cleanup_mechscope_marker(self):
+        try:
+            if MECHSCOPE_MARKER.exists():
+                current = MECHSCOPE_MARKER.read_text().strip()
+                if current == str(os.getpid()):
+                    MECHSCOPE_MARKER.unlink()
+        except Exception:
+            pass
+
     def start_hotkey_daemon(self):
         if not Path("/usr/local/bin/mechos-quick-actions-daemon").exists():
             return
@@ -4985,6 +5560,7 @@ class MechScope(QMainWindow):
                 self.hotkey_daemon.terminate()
             except Exception:
                 pass
+        self.cleanup_mechscope_marker()
         super().closeEvent(event)
 
     def tick(self):
@@ -5062,6 +5638,7 @@ class MechScope(QMainWindow):
 app = QApplication(sys.argv)
 app.setApplicationName("MechScope 2.0")
 w = MechScope()
+app.aboutToQuit.connect(w.cleanup_mechscope_marker)
 w.showFullScreen()
 sys.exit(app.exec())
 PYEOF
@@ -5698,6 +6275,7 @@ for f in \
   /usr/local/bin/mechos-recovery-helper \
   /usr/local/bin/mechos-hardware-scan \
   /usr/local/bin/mechos-installer-doctor \
+  /usr/local/bin/mechos-install-graphical \
   /usr/share/applications/mechscope.desktop \
   /usr/share/applications/mechos-return-to-mechscope.desktop \
   /usr/share/applications/mechos-performance-center.desktop \
@@ -5727,6 +6305,42 @@ test -x /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-pos
 test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/archinstall-mechos.json
 
 
+# Quick Actions + streaming are POST-INSTALL ONLY.
+# Their installed-system copies were already staged into mechos-rootfs.tar.zst.
+POSTINSTALL_ONLY_RUNTIME=(
+  /usr/local/bin/mechos-quick-actions
+  /usr/local/bin/mechos-quick-actions-daemon
+  /usr/local/bin/mechos-stream-control
+  /usr/local/bin/mechos-stream-center
+  /usr/local/bin/mechos-stream-optimize
+)
+
+# First verify every component exists inside the installed-system payload.
+for f in \
+  usr/local/bin/mechos-quick-actions \
+  usr/local/bin/mechos-quick-actions-daemon \
+  usr/local/bin/mechos-stream-control \
+  usr/local/bin/mechos-stream-center \
+  usr/local/bin/mechos-stream-optimize
+do
+  tar --zstd -tf \
+    /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst \
+    | grep -Fxq "./$f" || {
+      echo "ERROR: post-install payload lost $f" >&2
+      exit 1
+    }
+done
+
+# Then remove the active Live ISO copies before SquashFS generation.
+for f in "${POSTINSTALL_ONLY_RUNTIME[@]}"; do
+  rm -f "/workspace/archlive/airootfs$f"
+done
+
+for f in "${POSTINSTALL_ONLY_RUNTIME[@]}"; do
+  test ! -e "/workspace/archlive/airootfs$f"
+done
+
+
 # ArchISO-authoritative permissions. These prevent launchers from
 # losing executable bits inside the final SquashFS image.
 cat >> /workspace/archlive/profiledef.sh << "EOF"
@@ -5738,16 +6352,12 @@ file_permissions["/usr/local/bin/mechos-creator-session"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-gaming-session"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-boot-diagnostics"]="0:0:755"
 file_permissions["/usr/local/bin/mechscope"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-quick-actions"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-stream-control"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-stream-optimize"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-stream-center"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-quick-actions-daemon"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-return-to-mechscope"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-performance-center"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-firstboot"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-install"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-installer-doctor"]="0:0:755"
+file_permissions["/usr/local/bin/mechos-install-graphical"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-live-welcome"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-live-setup"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-recovery-center"]="0:0:755"
@@ -5773,11 +6383,6 @@ chmod 755 \
   /workspace/archlive/airootfs/usr/local/bin/mechos-creator-session \
   /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session \
   /workspace/archlive/airootfs/usr/local/bin/mechscope \
-  /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions \
-  /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control \
-  /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize \
-  /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center \
-  /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon \
   /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope \
   /workspace/archlive/airootfs/usr/local/bin/mechos-performance-center
 chmod 440 /workspace/archlive/airootfs/etc/sudoers.d/10-mechos-live
@@ -5802,20 +6407,27 @@ test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.want
 test ! -e /workspace/archlive/airootfs/etc/systemd/system/multi-user.target.wants/switcheroo-control.service
 grep -q 'DeviceTimeout=3' /workspace/archlive/airootfs/etc/plymouth/plymouthd.conf
 test -x /workspace/archlive/airootfs/usr/local/bin/mechscope
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
-grep -q "low-impact" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
-grep -q "hardware encoder" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
-grep -q "StartStream" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
-grep -q "StopStream" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
-grep -q "MECHOS STREAM CENTER" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
-grep -q "Ctrl+Shift+L" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon
-grep -q "MECHOS QUICK ACTIONS" /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
-grep -q "BTN_MODE" /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon
-grep -q "Ctrl+Shift+M" /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
+# Installed Quick Actions + streaming must be MechScope-only.
+tar --zstd -xOf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst ./usr/local/bin/mechos-quick-actions | grep -q "require_mechscope"
+tar --zstd -xOf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst ./usr/local/bin/mechos-quick-actions-daemon | grep -q "require_mechscope"
+tar --zstd -xOf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst ./usr/local/bin/mechos-stream-control | grep -q "require_mechscope"
+tar --zstd -xOf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst ./usr/local/bin/mechos-stream-center | grep -q "require_mechscope"
+tar --zstd -xOf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst ./usr/local/bin/mechos-stream-optimize | grep -q "require_mechscope"
+tar --zstd -xOf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst ./usr/local/bin/mechscope | grep -q "mechos-mechscope.active"
+
+# Quick Actions + streaming must not ship as active Live ISO binaries.
+test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
+test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions-daemon
+test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
+test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
+test ! -e /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
+
+# They must still be present in the installed-system payload.
+tar --zstd -tf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst | grep -Fxq "./usr/local/bin/mechos-quick-actions"
+tar --zstd -tf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst | grep -Fxq "./usr/local/bin/mechos-quick-actions-daemon"
+tar --zstd -tf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst | grep -Fxq "./usr/local/bin/mechos-stream-control"
+tar --zstd -tf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst | grep -Fxq "./usr/local/bin/mechos-stream-center"
+tar --zstd -tf /workspace/archlive/airootfs/usr/share/mechos/install-payload/mechos-rootfs.tar.zst | grep -Fxq "./usr/local/bin/mechos-stream-optimize"
 grep -q -- "--mangoapp" /workspace/archlive/airootfs/usr/local/bin/mechos-gaming-session
 grep -q "MECHSCOPE 2.0" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "RECENT LIBRARY" /workspace/archlive/airootfs/usr/local/bin/mechscope
@@ -5830,6 +6442,11 @@ test -x /workspace/archlive/airootfs/usr/local/bin/mechos-performance-center
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-firstboot
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-install
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-installer-doctor
+test -x /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical
+grep -q "MECHOS_GRAPHICAL_STAGE=partition" /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical
+grep -q "MECHOS_GRAPHICAL_INSTALL_SUCCESS" /workspace/archlive/airootfs/usr/local/bin/mechos-install-graphical
+grep -q "FINAL DISK CONFIRMATION" /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
+grep -q "fully graphical MechOS clean install" /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
 grep -q "MECHOS INSTALLER BACKEND" /workspace/archlive/airootfs/usr/local/bin/mechos-install
 grep -q "SUCCESS_TOKEN" /workspace/archlive/airootfs/usr/local/bin/mechos-install
 grep -q "Installation completed without any errors" /workspace/archlive/airootfs/usr/local/bin/mechos-install
