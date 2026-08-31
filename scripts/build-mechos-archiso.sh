@@ -4300,6 +4300,7 @@ grep -q "RECENT LIBRARY" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "PROJECT MANAGER" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 grep -q "ASSET BROWSER" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 grep -q "CREATOR MODE PRESETS" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
+grep -q "CREATOR MODE 2.0" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 grep -q "exec /usr/local/bin/mechos-live-setup" /workspace/archlive/airootfs/usr/local/bin/mechos-live-welcome
 grep -q "MECHSCOPE 2.0" /workspace/archlive/airootfs/usr/share/plymouth/themes/mechos/mechos.script
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-return-to-mechscope
@@ -4314,9 +4315,9 @@ test -x /workspace/archlive/airootfs/usr/local/bin/mechos-hardware-scan
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-preserve-home
 test -s /workspace/archlive/airootfs/usr/share/applications/mechos-live-setup.desktop
 test -s /workspace/archlive/airootfs/usr/share/applications/mechos-recovery-center.desktop
-grep -q "MECHOS SETUP" /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
 test -s /workspace/archlive/airootfs/usr/share/mechos/branding/mechos-installer-reference.png
 grep -q "MECHOS INSTALLER" /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
+grep -q "Select your target drive and installation type" /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
 grep -q "HARDWARE SUMMARY" /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
 grep -q "INSTALL OVERVIEW" /workspace/archlive/airootfs/usr/local/bin/mechos-live-setup
 grep -q "MECHOS RECOVERY CENTER" /workspace/archlive/airootfs/usr/local/bin/mechos-recovery-center
@@ -4345,7 +4346,6 @@ grep -q "Update Center" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "mechos-update-center" /workspace/archlive/airootfs/usr/local/bin/mechscope
 grep -q "Update Center" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 grep -q "Steam Library" /workspace/archlive/airootfs/usr/local/bin/mechscope
-grep -q "Creator Dashboard" /workspace/archlive/airootfs/usr/local/bin/mechos-creator-mode
 test -s /workspace/archlive/airootfs/usr/share/mechos/branding/mechos-logo.png
 test -f /workspace/archlive/airootfs/usr/share/plymouth/themes/mechos/mechos.plymouth
 grep -Rqs 'plymouth' /workspace/archlive/airootfs/etc/mkinitcpio.conf* /workspace/archlive/airootfs/etc/mkinitcpio.conf.d 2>/dev/null
