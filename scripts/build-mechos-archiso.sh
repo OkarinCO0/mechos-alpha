@@ -5712,6 +5712,7 @@ for f in \
   /usr/local/bin/mechos-update-helper \
   /usr/local/bin/mechos-update-center \
   /usr/share/applications/mechos-update-center.desktop \
+  /usr/share/applications/mechos-creator-mode.desktop \
   /usr/share/applications/mechos-postinstall.desktop \
   /usr/local/bin/mechos-creator-setup \
   /usr/local/bin/mechos-firstboot \
