@@ -10,7 +10,7 @@ fail() {
   exit 1
 }
 
-for command_name in bash python3 file sha256sum awk grep find mktemp; do
+for command_name in bash python3 sha256sum awk grep find mktemp; do
   command -v "$command_name" >/dev/null 2>&1 || fail "missing validator command: $command_name"
 done
 
@@ -86,6 +86,38 @@ grep -q 'archinstall' "$BASE/scripts/build-mechos-archiso.sh" || fail "Archinsta
 grep -q '/run/archiso/bootmnt' "$ROOT/usr/local/lib/mechos/runtime.sh" || fail "ArchISO live detection is missing"
 grep -qx 'MECHOS_BASE=Arch-Linux' "$ROOT/etc/mechos/mechos.conf" || fail "MechOS base metadata is not Arch Linux"
 
+python3 - "$BASE/scripts/build-mechos-archiso.sh" "$BASE/scripts/mechos-current-integration.sh" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+builder = Path(sys.argv[1]).read_text(encoding="utf-8")
+integration = Path(sys.argv[2]).read_text(encoding="utf-8")
+
+match = re.search(
+    r"POSTINSTALL_ONLY_RUNTIME=\(\n(?P<body>.*?)\n\)",
+    integration,
+    flags=re.DOTALL,
+)
+if not match:
+    raise SystemExit("MechOS validation error: post-install runtime manifest is missing")
+
+members = [line.strip() for line in match.group("body").splitlines() if line.strip()]
+for member in members:
+    staged = f"  /{member} \\\n"
+    if staged not in builder:
+        raise SystemExit(
+            "MechOS validation error: post-install runtime is not staged: " + member
+        )
+
+    permission = f'file_permissions["/{member}"]'
+    if permission in builder:
+        raise SystemExit(
+            "MechOS validation error: post-install-only runtime has Live "
+            "file_permissions entry: " + member
+        )
+PY
+
 for legacy in \
   "$BASE/kiwi/mechos.xml" \
   "$BASE/scripts/patch-fedora-kiwi.py" \
@@ -110,9 +142,66 @@ wallpaper_count="$(find "$wallpaper_dir" -maxdepth 1 -type f -name 'mechos-wallp
 [[ "$wallpaper_count" -eq 19 ]] || fail "expected 19 wallpapers, got $wallpaper_count"
 unique_count="$(sha256sum "$wallpaper_dir"/mechos-wallpaper-*.jpg | awk '{print $1}' | sort -u | wc -l)"
 [[ "$unique_count" -eq 19 ]] || fail "expected 19 distinct wallpapers, got $unique_count"
-for wallpaper in "$wallpaper_dir"/mechos-wallpaper-*.jpg; do
-  file "$wallpaper" | grep -q '1920x1080' || fail "unexpected wallpaper dimensions: $wallpaper"
-done
+python3 - "$wallpaper_dir" <<'PY'
+import pathlib
+import struct
+import sys
+
+
+def jpeg_dimensions(path: pathlib.Path) -> tuple[int, int]:
+    """Read JPEG dimensions without relying on the optional `file` utility."""
+    with path.open("rb") as image:
+        if image.read(2) != b"\xff\xd8":
+            raise ValueError("not a JPEG")
+
+        while True:
+            prefix = image.read(1)
+            if not prefix:
+                raise ValueError("missing start-of-frame marker")
+            if prefix != b"\xff":
+                continue
+
+            marker = image.read(1)
+            while marker == b"\xff":
+                marker = image.read(1)
+            if not marker:
+                raise ValueError("truncated marker")
+            if marker in {b"\xd8", b"\xd9"}:
+                continue
+
+            length_bytes = image.read(2)
+            if len(length_bytes) != 2:
+                raise ValueError("truncated segment")
+            segment_length = struct.unpack(">H", length_bytes)[0]
+            if segment_length < 2:
+                raise ValueError("invalid segment length")
+
+            # SOF markers which contain a sample precision and image dimensions.
+            if marker[0] in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                             0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+                frame = image.read(5)
+                if len(frame) != 5:
+                    raise ValueError("truncated start-of-frame segment")
+                height, width = struct.unpack(">HH", frame[1:])
+                return width, height
+
+            image.seek(segment_length - 2, 1)
+
+
+wallpaper_dir = pathlib.Path(sys.argv[1])
+for wallpaper in sorted(wallpaper_dir.glob("mechos-wallpaper-*.jpg")):
+    try:
+        dimensions = jpeg_dimensions(wallpaper)
+    except (OSError, ValueError, struct.error) as error:
+        raise SystemExit(
+            f"MechOS validation error: invalid wallpaper {wallpaper}: {error}"
+        ) from error
+    if dimensions != (1920, 1080):
+        raise SystemExit(
+            f"MechOS validation error: unexpected wallpaper dimensions: "
+            f"{wallpaper} ({dimensions[0]}x{dimensions[1]})"
+        )
+PY
 
 echo "MechOS 0.3.0 ArchISO static validation passed."
 echo "Wallpapers: $wallpaper_count distinct 1920x1080 images."

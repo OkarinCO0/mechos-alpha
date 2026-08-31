@@ -5695,7 +5695,6 @@ for f in \
   /usr/local/bin/mechos-quick-actions \
   /usr/local/bin/mechos-stream-control \
   /usr/local/bin/mechos-stream-center \
-  /usr/local/bin/mechos-stream-optimize \
   /usr/local/bin/mechos-quick-actions-daemon \
   /usr/local/bin/mechos-creator-mode \
   /usr/local/bin/mechos-creator-app \
@@ -5713,6 +5712,7 @@ for f in \
   /usr/local/bin/mechos-update-helper \
   /usr/local/bin/mechos-update-center \
   /usr/share/applications/mechos-update-center.desktop \
+  /usr/share/applications/mechos-creator-mode.desktop \
   /usr/share/applications/mechos-postinstall.desktop \
   /usr/local/bin/mechos-creator-setup \
   /usr/local/bin/mechos-firstboot \
@@ -5755,20 +5755,11 @@ test -s /workspace/archlive/airootfs/usr/share/mechos/install-payload/archinstal
 # losing executable bits inside the final SquashFS image.
 cat >> /workspace/archlive/profiledef.sh << "EOF"
 
-file_permissions["/usr/local/bin/mechos-creator-mode"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-creator-app"]="0:0:755"
-file_permissions["/usr/local/libexec/mechos-creator-app-installer"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-postinstall"]="0:0:755"
 file_permissions["/usr/local/libexec/mechos-gaming-setup-helper"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-creator-session"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-gaming-session"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-boot-diagnostics"]="0:0:755"
 file_permissions["/usr/local/bin/mechscope"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-quick-actions"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-stream-control"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-stream-center"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-stream-optimize"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-quick-actions-daemon"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-return-to-mechscope"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-performance-center"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-firstboot"]="0:0:755"
@@ -5785,7 +5776,6 @@ file_permissions["/usr/local/bin/mechos-gpu-setup"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-update"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-update-helper"]="0:0:755"
 file_permissions["/usr/local/bin/mechos-update-center"]="0:0:755"
-file_permissions["/usr/local/bin/mechos-creator-setup"]="0:0:755"
 file_permissions["/usr/share/mechos/install-payload/mechos-postinstall-target"]="0:0:755"
 file_permissions["/usr/share/mechos/install-payload/archinstall-mechos.json"]="0:0:644"
 file_permissions["/usr/share/mechos/install-payload/mechos-rootfs.tar.zst"]="0:0:644"
@@ -5836,7 +5826,6 @@ test -x /workspace/archlive/airootfs/usr/local/bin/mechscope
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-quick-actions
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
 test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
-test -x /workspace/archlive/airootfs/usr/local/bin/mechos-stream-optimize
 grep -q "StartStream" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
 grep -q "StopStream" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-control
 grep -q "MECHOS STREAM CENTER" /workspace/archlive/airootfs/usr/local/bin/mechos-stream-center
