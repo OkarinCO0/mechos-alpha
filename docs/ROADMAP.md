@@ -44,6 +44,19 @@
 - pre-update Snapper snapshot and rollback protection before MechOS hotfix/update installation when supported
 - update history, release notes, reboot-required state and failed-update recovery surfaced through the MechOS Update Center
 
+### GPU compatibility database
+
+- add a MechScope/Settings GPU compatibility database for AMD Radeon, Intel Arc/Iris/UHD and NVIDIA GeForce/RTX hardware
+- automatically detect GPU model, PCI ID, active kernel driver, Vulkan device/driver, Mesa or NVIDIA userspace version, PRIME/hybrid-GPU state and Gamescope preflight result
+- show clear support tiers such as **Verified**, **Compatible**, **Experimental**, **Legacy** and **Unsupported/Untested** instead of claiming universal GPU support
+- maintain model/family profiles for current AMD Radeon, Intel Arc/Iris and NVIDIA RTX hardware, with separate legacy handling for older NVIDIA and older Vulkan-limited GPUs
+- surface required package paths for each supported family, including Mesa/Vulkan packages for AMD and Intel and the correct NVIDIA kernel/userspace/32-bit package stack for RTX-class hardware
+- verify and display 32-bit Vulkan/OpenGL readiness for Steam and Proton so a GPU is not marked Verified when only the 64-bit graphics stack is working
+- add runtime health checks for Vulkan, Gamescope, MechScope fullscreen startup, PRIME render offload where applicable, hardware video encode/decode availability when detectable and driver/module mismatches
+- allow hardware compatibility entries and driver-package recommendations to be updated through reviewed MechOS update/hotfix data without rebuilding the entire ISO
+- provide a user-facing GPU details page with detected hardware, installed driver package/version, Vulkan status, MechScope status, known limitations and recommended fixes
+- feed anonymous/manual test results into a reviewable compatibility matrix so specific GPU models can move from Untested to Compatible or Verified only after real hardware testing
+
 ### Creator Mode and Windows creator tools
 
 - expand the Creator Mode Store with verified Windows-only creator applications that are usable on MechOS through supported Wine, Bottles, Lutris or Proton-based compatibility paths where appropriate
