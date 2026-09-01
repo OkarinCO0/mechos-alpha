@@ -13,6 +13,9 @@ bash /workspace/scripts/mechos-safe-mode-switching-integration.sh final
 # Retry nested Gamescope with an alternate backend and detect instant startup
 # failures before falling back to the persistent Plasma desktop.
 bash /workspace/scripts/mechos-gamescope-amd-compat-integration.sh final
+# The Desktop -> MechScope launcher is a normal user-session action. It must not
+# use loginctl, sudo, pkexec, or anything else that can request a password.
+bash /workspace/scripts/mechos-passwordless-return-integration.sh final
 
 """
 
@@ -30,7 +33,7 @@ def main() -> None:
     if not text.startswith("#!"):
         fail("target does not look like a shell builder")
 
-    # Idempotent: remove the exact previously injected call block first.
+    # Idempotent: remove any previous version of this integration block.
     text = re.sub(
         rf"\n{re.escape(MARKER)}\n"
         r"# Keep Plasma as the persistent graphical session and run MechScope/Gamescope\n"
@@ -38,7 +41,10 @@ def main() -> None:
         r"bash /workspace/scripts/mechos-safe-mode-switching-integration\.sh final\n"
         r"(?:# Retry nested Gamescope with an alternate backend and detect instant startup\n"
         r"# failures before falling back to the persistent Plasma desktop\.\n"
-        r"bash /workspace/scripts/mechos-gamescope-amd-compat-integration\.sh final\n)?\n",
+        r"bash /workspace/scripts/mechos-gamescope-amd-compat-integration\.sh final\n)?"
+        r"(?:# The Desktop -> MechScope launcher is a normal user-session action\. It must not\n"
+        r"# use loginctl, sudo, pkexec, or anything else that can request a password\.\n"
+        r"bash /workspace/scripts/mechos-passwordless-return-integration\.sh final\n)?\n",
         "\n",
         text,
     )
@@ -54,7 +60,10 @@ def main() -> None:
     if text.count(MARKER) != 1:
         fail("safe mode-switch marker count is not exactly one")
 
-    print(f"[MechOS mode-switch patcher] safe in-session switching and Gamescope compatibility added to {target}")
+    print(
+        f"[MechOS mode-switch patcher] safe in-session switching, Gamescope compatibility "
+        f"and passwordless return added to {target}"
+    )
 
 
 if __name__ == "__main__":
