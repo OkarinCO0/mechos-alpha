@@ -28,12 +28,175 @@ for pkg in "${OPTIONAL_CREATOR_PACKAGES[@]}"; do
   sed -i "/^${pkg}$/d" "$PACKAGES"
 done
 
+install_creator_categories() {
+  local tree="$1"
+  local bin="$tree/usr/local/bin"
+  local libexec="$tree/usr/local/libexec"
+  local manifests="$tree/usr/share/mechos/creator-packages"
+  mkdir -p "$bin" "$libexec" "$manifests"
+
+  cat > "$manifests/vrchat-creator.json" <<'EOF'
+{
+  "id": "vrchat-creator",
+  "name": "VRChat Creator",
+  "description": "Unity Hub, Blender and VS Code for avatar/world creation. VRChat SDK/VCC setup remains vendor-managed.",
+  "disk_space": "Varies by Unity editor and projects",
+  "native": ["blender"],
+  "flatpak": ["unityhub", "vscode"]
+}
+EOF
+
+  cat > "$manifests/game-design.json" <<'EOF'
+{
+  "id": "game-design",
+  "name": "Game Design",
+  "description": "Godot, Unity Hub, Blender, VS Code and GitKraken. Unreal Engine remains vendor-managed.",
+  "disk_space": "Varies by installed engines",
+  "native": ["godot", "blender"],
+  "flatpak": ["unityhub", "vscode", "gitkraken"]
+}
+EOF
+
+  cat > "$manifests/3d-texturing.json" <<'EOF'
+{
+  "id": "3d-texturing",
+  "name": "3D Art & Texturing",
+  "description": "Blender and Krita. Substance 3D Painter remains available separately through Steam.",
+  "disk_space": "Approximately 3-5 GB plus projects",
+  "native": ["blender", "krita"],
+  "flatpak": []
+}
+EOF
+
+  cat > "$manifests/streaming-video.json" <<'EOF'
+{
+  "id": "streaming-video",
+  "name": "Streaming & Video",
+  "description": "OBS Studio, Kdenlive, Audacity and Discord.",
+  "disk_space": "Approximately 3-5 GB",
+  "native": ["obs", "kdenlive", "audacity"],
+  "flatpak": ["discord"]
+}
+EOF
+
+  cat > "$manifests/audio-music.json" <<'EOF'
+{
+  "id": "audio-music",
+  "name": "Audio & Music",
+  "description": "Audacity and LMMS for audio editing and music production.",
+  "disk_space": "Approximately 1-2 GB",
+  "native": ["audacity", "lmms"],
+  "flatpak": []
+}
+EOF
+
+  cat > "$manifests/compatibility-tools.json" <<'EOF'
+{
+  "id": "compatibility-tools",
+  "name": "Windows & Compatibility",
+  "description": "Bottles, Heroic and ProtonUp-Qt. Core Wine/Proton support remains part of MechOS gaming.",
+  "disk_space": "Approximately 2-4 GB plus prefixes",
+  "native": [],
+  "flatpak": ["bottles", "heroic", "protonupqt"]
+}
+EOF
+
+  cat > "$libexec/mechos-creator-app-installer" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+[ "$(id -u)" -eq 0 ] || { echo "Administrator privileges required." >&2; exit 1; }
+
+if [ "${1:-}" = "--package" ]; then
+  case "${2:-}" in
+    vrchat-creator) PKGS=(blender) ;;
+    game-design) PKGS=(godot blender) ;;
+    3d-texturing) PKGS=(blender krita) ;;
+    streaming-video) PKGS=(obs-studio kdenlive audacity) ;;
+    audio-music) PKGS=(audacity lmms) ;;
+    compatibility-tools) PKGS=() ;;
+    streamer) PKGS=(obs-studio kdenlive audacity) ;;
+    graphics) PKGS=(blender krita) ;;
+    game-dev) PKGS=(godot blender) ;;
+    windows-apps) PKGS=() ;;
+    *) echo "Unknown Creator package id." >&2; exit 2 ;;
+  esac
+
+  if command -v snapper >/dev/null 2>&1 && snapper list-configs 2>/dev/null | awk '{print $1}' | grep -qx root; then
+    snapper -c root create --type single --description "Before MechOS Creator package: ${2}" || true
+  fi
+
+  [ "${#PKGS[@]}" -gt 0 ] || exit 0
+  exec pacman -S --needed --noconfirm "${PKGS[@]}"
+fi
+
+case "${1:-}" in
+  blender) PKG=blender ;;
+  obs) PKG=obs-studio ;;
+  kdenlive) PKG=kdenlive ;;
+  krita) PKG=krita ;;
+  godot) PKG=godot ;;
+  audacity) PKG=audacity ;;
+  lmms) PKG=lmms ;;
+  lutris) PKG=lutris ;;
+  wine) PKG=wine ;;
+  winetricks) PKG=winetricks ;;
+  protontricks) PKG=protontricks ;;
+  steam) PKG=steam ;;
+  *) echo "Unknown Creator app id." >&2; exit 2 ;;
+esac
+
+exec pacman -S --needed --noconfirm "$PKG"
+EOF
+  chmod 755 "$libexec/mechos-creator-app-installer"
+
+  local creator="$bin/mechos-creator-mode"
+  if [ -f "$creator.real" ]; then
+    creator="$creator.real"
+  fi
+  [ -f "$creator" ] || fail "Creator Mode executable is missing in $tree"
+
+  python3 - "$creator" <<'PYEOF'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+
+packages = '''PACKAGES=[
+ ("VRChat Creator","vrchat-creator","Unity Hub, Blender and VS Code; VRChat SDK/VCC setup remains vendor-managed","Varies by Unity editor"),
+ ("Game Design","game-design","Godot, Unity Hub, Blender, VS Code and GitKraken; Unreal remains vendor-managed","Varies by engines"),
+ ("3D Art & Texturing","3d-texturing","Blender and Krita; Substance 3D Painter is available separately through Steam","Approximately 3-5 GB"),
+ ("Streaming & Video","streaming-video","OBS Studio, Kdenlive, Audacity and Discord","Approximately 3-5 GB"),
+ ("Audio & Music","audio-music","Audacity and LMMS","Approximately 1-2 GB"),
+ ("Windows & Compatibility","compatibility-tools","Bottles, Heroic and ProtonUp-Qt","Approximately 2-4 GB"),
+]'''
+
+text, count = re.subn(r'PACKAGES=\[.*?\]\n\nSTYLE=', packages + '\n\nSTYLE=', text, count=1, flags=re.S)
+if count != 1:
+    raise SystemExit("Creator Mode PACKAGES block was not found")
+
+text = text.replace(
+    "Install trusted MechOS creator bundles or choose individual applications. Native packages request administrator approval; Flatpaks install only for your user account.",
+    "Install by Creator category or choose individual applications. VRChat Creator, Game Design, 3D Art, Streaming, Audio and Compatibility categories can each be installed as a bundle."
+)
+path.write_text(text, encoding="utf-8")
+PYEOF
+
+  python3 -m py_compile "$creator" || fail "Creator Mode Python compile failed after category patch"
+  grep -Fq 'VRChat Creator","vrchat-creator' "$creator" || fail "VRChat Creator category is missing from Creator Mode"
+  grep -Fq 'Game Design","game-design' "$creator" || fail "Game Design category is missing from Creator Mode"
+}
+
 install_creator_postinstall() {
   local tree="$1"
   local bin="$tree/usr/local/bin"
   local libexec="$tree/usr/local/libexec"
   local autostart="$tree/etc/xdg/autostart"
   mkdir -p "$bin" "$libexec" "$autostart"
+
+  install_creator_categories "$tree"
 
   cat > "$libexec/mechos-creator-postinstall-native" <<'EOF'
 #!/usr/bin/env bash
@@ -137,9 +300,19 @@ APPS = [
     ("ProtonUp-Qt", "protonupqt", "GE-Proton and Wine tools", "Flatpak"),
 ]
 
+CATEGORIES = [
+    ("VRChat Creator", ["unityhub", "blender", "vscode"], "Avatar/world creation essentials. VRChat SDK/VCC setup remains vendor-managed."),
+    ("Game Design", ["godot", "unityhub", "blender", "vscode", "gitkraken"], "Game engine, art and code tools. Unreal Engine remains vendor-managed."),
+    ("3D Art & Texturing", ["blender", "krita"], "Modeling and texture tools. Substance 3D Painter stays available through Steam."),
+    ("Streaming & Video", ["obs", "kdenlive", "audacity", "discord"], "Streaming, recording, editing and creator communication."),
+    ("Audio & Music", ["audacity", "lmms"], "Audio editing and music production."),
+    ("Windows & Compatibility", ["bottles", "heroic", "protonupqt"], "Optional Windows-app and launcher tools."),
+]
+
 STYLE = """
 QWidget { background:#080a10; color:#f4effb; font-family:Sans Serif; }
 QFrame#card { background:#111520; border:1px solid #34304a; border-radius:12px; }
+QFrame#category { background:#0d1018; border:1px solid #52316d; border-radius:12px; }
 QLabel#title { font-size:28px; font-weight:900; }
 QLabel#muted { color:#aaa2b7; }
 QLabel#purple { color:#c879ff; font-weight:800; }
@@ -158,9 +331,10 @@ class Setup(QMainWindow):
     def __init__(self):
         super().__init__()
         self.checks = []
+        self.check_by_id = {}
         self.setWindowTitle("MechOS Creator Apps Setup")
-        self.resize(1100, 760)
-        self.setMinimumSize(900, 620)
+        self.resize(1180, 840)
+        self.setMinimumSize(940, 650)
         self.setStyleSheet(STYLE)
         self.build()
 
@@ -176,20 +350,47 @@ class Setup(QMainWindow):
         outer.addWidget(title)
 
         subtitle = QLabel(
-            "MechOS keeps Creator applications out of the base install. "
-            "Choose only what you want now. Anything you skip remains available later in Creator Mode."
+            "Creator applications are optional. Install a complete category such as VRChat Creator or Game Design, mix categories, or choose individual apps. Anything skipped remains installable later inside Creator Mode."
         )
         subtitle.setObjectName("muted")
         subtitle.setWordWrap(True)
         outer.addWidget(subtitle)
 
-        note = QLabel(
-            "Core MechOS gaming components remain installed separately. "
-            "Large vendor/store apps such as Unreal Engine, VRChat tooling and Substance 3D Painter stay in the Creator Store for vendor-managed setup."
-        )
-        note.setObjectName("purple")
-        note.setWordWrap(True)
-        outer.addWidget(note)
+        category_label = QLabel("INSTALL BY CATEGORY")
+        category_label.setObjectName("purple")
+        outer.addWidget(category_label)
+
+        category_grid = QGridLayout()
+        category_grid.setSpacing(10)
+        for i, (name, ids, desc) in enumerate(CATEGORIES):
+            card = QFrame()
+            card.setObjectName("category")
+            layout = QVBoxLayout(card)
+            n = QLabel(name)
+            n.setObjectName("purple")
+            layout.addWidget(n)
+            d = QLabel(desc)
+            d.setObjectName("muted")
+            d.setWordWrap(True)
+            layout.addWidget(d)
+            b = QPushButton("Select Category")
+            b.clicked.connect(lambda _, items=ids: self.select_category(items))
+            layout.addWidget(b)
+            category_grid.addWidget(card, i // 3, i % 3)
+        outer.addLayout(category_grid)
+
+        individual = QHBoxLayout()
+        label = QLabel("INDIVIDUAL APPS")
+        label.setObjectName("purple")
+        individual.addWidget(label)
+        individual.addStretch()
+        all_button = QPushButton("Select All")
+        all_button.clicked.connect(self.select_all)
+        individual.addWidget(all_button)
+        clear_button = QPushButton("Clear")
+        clear_button.clicked.connect(self.clear_selection)
+        individual.addWidget(clear_button)
+        outer.addLayout(individual)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -212,6 +413,7 @@ class Setup(QMainWindow):
             s.setObjectName("purple")
             layout.addWidget(s)
             self.checks.append(check)
+            self.check_by_id[appid] = check
             grid.addWidget(card, i // 3, i % 3)
 
         scroll.setWidget(content)
@@ -222,10 +424,24 @@ class Setup(QMainWindow):
         skip = QPushButton("Skip — Install Later")
         skip.clicked.connect(self.skip)
         buttons.addWidget(skip)
-        install = QPushButton("Install Selected Apps")
+        install = QPushButton("Install Selected Categories / Apps")
         install.clicked.connect(self.install)
         buttons.addWidget(install)
         outer.addLayout(buttons)
+
+    def select_category(self, ids):
+        for appid in ids:
+            check = self.check_by_id.get(appid)
+            if check is not None:
+                check.setChecked(True)
+
+    def select_all(self):
+        for check in self.checks:
+            check.setChecked(True)
+
+    def clear_selection(self):
+        for check in self.checks:
+            check.setChecked(False)
 
     def finish_marker(self):
         MARKER.parent.mkdir(parents=True, exist_ok=True)
@@ -242,7 +458,7 @@ class Setup(QMainWindow):
         if QMessageBox.question(
             self,
             "Creator Apps",
-            "Skip app installation for now? You can install everything later from Creator Mode.",
+            "Skip Creator app installation for now? You can install by category or individual app later from Creator Mode.",
         ) != QMessageBox.StandardButton.Yes:
             return
         self.finish_marker()
@@ -280,7 +496,7 @@ PYEOF
 [Desktop Entry]
 Type=Application
 Name=MechOS Creator Apps Setup
-Comment=Choose optional Creator applications after MechOS installation
+Comment=Choose optional Creator categories or individual applications after MechOS installation
 Exec=/usr/local/bin/mechos-creator-postinstall
 Terminal=false
 OnlyShowIn=KDE;
@@ -328,9 +544,11 @@ rm -rf "$tmp"
 trap - EXIT
 
 grep -Fq 'CREATOR APPS SETUP' "$ROOT/usr/local/bin/mechos-creator-postinstall" || fail "Creator Apps wizard is missing"
+grep -Fq 'VRChat Creator' "$ROOT/usr/local/bin/mechos-creator-postinstall" || fail "VRChat post-install category is missing"
+grep -Fq 'Game Design' "$ROOT/usr/local/bin/mechos-creator-postinstall" || fail "Game Design post-install category is missing"
 grep -Fq 'MECHOS_CREATOR_POSTINSTALL_GATE' "$ROOT/usr/local/bin/mechos-gaming-shell" || fail "MechScope startup gate is missing"
 for pkg in "${OPTIONAL_CREATOR_PACKAGES[@]}"; do
   ! grep -qx "$pkg" "$PACKAGES" || fail "Creator app still preloaded in core ISO: $pkg"
 done
 
-log "Creator Mode is catalog-first: workstation apps are opt-in during post-install setup and remain installable later"
+log "Creator apps remain optional; users can install by VRChat, Game Design and other categories during post-install or later inside Creator Mode"
