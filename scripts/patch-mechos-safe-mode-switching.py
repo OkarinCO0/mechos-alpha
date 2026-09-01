@@ -16,6 +16,10 @@ bash /workspace/scripts/mechos-gamescope-amd-compat-integration.sh final
 # The Desktop -> MechScope launcher is a normal user-session action. It must not
 # use loginctl, sudo, pkexec, or anything else that can request a password.
 bash /workspace/scripts/mechos-passwordless-return-integration.sh final
+# Creator Mode is wrapped by the first-run tutorial. Teach the Discord
+# integration to patch mechos-creator-mode.real instead of compiling the Bash wrapper.
+python3 /workspace/scripts/patch-mechos-discord-creator-wrapper.py \
+  /workspace/scripts/mechos-discord-screenshare-integration.sh
 # Discord uses the same user-session PipeWire/portal path in MechScope, Desktop
 # and Creator Mode so screen sharing does not require switching sessions.
 bash /workspace/scripts/mechos-discord-screenshare-integration.sh final
@@ -48,6 +52,10 @@ def main() -> None:
         r"(?:# The Desktop -> MechScope launcher is a normal user-session action\. It must not\n"
         r"# use loginctl, sudo, pkexec, or anything else that can request a password\.\n"
         r"bash /workspace/scripts/mechos-passwordless-return-integration\.sh final\n)?"
+        r"(?:# Creator Mode is wrapped by the first-run tutorial\. Teach the Discord\n"
+        r"# integration to patch mechos-creator-mode\.real instead of compiling the Bash wrapper\.\n"
+        r"python3 /workspace/scripts/patch-mechos-discord-creator-wrapper\.py \\\n"
+        r"  /workspace/scripts/mechos-discord-screenshare-integration\.sh\n)?"
         r"(?:# Discord uses the same user-session PipeWire/portal path in MechScope, Desktop\n"
         r"# and Creator Mode so screen sharing does not require switching sessions\.\n"
         r"bash /workspace/scripts/mechos-discord-screenshare-integration\.sh final\n)?\n",
