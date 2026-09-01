@@ -9,26 +9,94 @@ MARKER = "# MECHOS_CREATOR_POSTINSTALL_INTEGRATION"
 CALL = MARKER + """
 # Keep Creator applications out of the base image and offer them as an
 # opt-in step after account setup, before MechScope starts.
-# Creator Mode itself is post-install-only after the footprint pass, so make
-# the Creator post-install integration tolerate the intentionally absent Live
-# executable while still requiring and patching the installed payload copy.
+# Creator Mode itself is post-install-only after the footprint pass. Adapt the
+# older Creator postinstall integration to the persistent Plasma gaming layer.
 python3 - <<'PY'
 from pathlib import Path
 
 path = Path('/workspace/scripts/mechos-creator-postinstall-integration.sh')
-lines = path.read_text(encoding='utf-8').splitlines()
-needle = '  [ -f "$creator" ] || fail "Creator Mode executable is missing in $tree"'
-replacement = [
-    '  if [ ! -f "$creator" ]; then',
-    '    log "Creator Mode is post-install-only in $tree; keeping category manifests and post-install runtime without patching a Live Creator executable"',
-    '    return 0',
-    '  fi',
-]
-if needle in lines:
-    index = lines.index(needle)
-    lines[index:index + 1] = replacement
+text = path.read_text(encoding='utf-8')
+lines = text.splitlines()
+
+# Creator Mode is intentionally absent from the Live tree after the footprint
+# pass, but it must still be present and patched in the installed payload.
+old_creator = '  [ -f "$creator" ] || fail "Creator Mode executable is missing in $tree"'
+if old_creator in lines:
+    i = lines.index(old_creator)
+    lines[i:i + 1] = [
+        '  if [ ! -f "$creator" ]; then',
+        '    log "Creator Mode is post-install-only in $tree; keeping category manifests and post-install runtime without patching a Live Creator executable"',
+        '    return 0',
+        '  fi',
+    ]
 elif not any('Creator Mode is post-install-only in $tree' in line for line in lines):
     raise SystemExit('Creator post-install compatibility point was not found; refusing a blind patch')
+
+# The old postinstall runner tried to launch a removed mechos-gaming-shell.
+# Start the new persistent-Plasma gaming layer instead.
+for i in range(len(lines) - 2):
+    if (
+        lines[i] == 'if [ -x /usr/local/bin/mechos-gaming-shell ]; then'
+        and lines[i + 1] == '  nohup /usr/local/bin/mechos-gaming-shell >/dev/null 2>&1 &'
+        and lines[i + 2] == 'fi'
+    ):
+        lines[i:i + 3] = [
+            'if [ -x /usr/local/bin/mechos-gaming-layer-control ]; then',
+            '  nohup /usr/local/bin/mechos-gaming-layer-control start >/dev/null 2>&1 &',
+            'fi',
+        ]
+        break
+
+for i, line in enumerate(lines):
+    if line == '        if Path("/usr/local/bin/mechos-gaming-shell").exists():':
+        lines[i] = '        if Path("/usr/local/bin/mechos-gaming-layer-control").exists():'
+    elif line == '                ["/usr/local/bin/mechos-gaming-shell"],':
+        lines[i] = '                ["/usr/local/bin/mechos-gaming-layer-control", "start"],'
+
+# Gate the actual gaming-layer autostart until the Creator Apps setup has been
+# completed or explicitly skipped. The previous code targeted a deleted shell.
+old_gate_start = '  local gaming="$bin/mechos-gaming-shell"'
+if old_gate_start in lines:
+    start = lines.index(old_gate_start)
+    end = None
+    for j in range(start, len(lines)):
+        if lines[j] == '    bash -n "$gaming" || fail "gaming shell syntax failed after Creator postinstall gate"':
+            if j + 1 < len(lines) and lines[j + 1] == '  fi':
+                end = j + 2
+            break
+    if end is None:
+        raise SystemExit('Old Creator gaming-shell gate block was not complete; refusing a blind patch')
+    replacement = [
+        '  local gaming_autostart="$bin/mechos-gaming-layer-autostart"',
+        '  if [ -f "$gaming_autostart" ] && ! grep -Fq \'MECHOS_CREATOR_POSTINSTALL_GATE\' "$gaming_autostart"; then',
+        '    tmp_gate="$(mktemp)"',
+        '    {',
+        '      head -n1 "$gaming_autostart"',
+        "      cat <<'GATE_EOF'",
+        '# MECHOS_CREATOR_POSTINSTALL_GATE',
+        'if [ -e /var/lib/mechos/oobe-complete ] && [ ! -e "${XDG_CONFIG_HOME:-$HOME/.config}/mechos/creator-postinstall-complete" ]; then',
+        '  exit 0',
+        'fi',
+        'GATE_EOF',
+        '      tail -n +2 "$gaming_autostart"',
+        '    } > "$tmp_gate"',
+        '    cat "$tmp_gate" > "$gaming_autostart"',
+        '    rm -f "$tmp_gate"',
+        '    chmod 755 "$gaming_autostart"',
+        '    bash -n "$gaming_autostart" || fail "gaming-layer autostart syntax failed after Creator postinstall gate"',
+        '  fi',
+    ]
+    lines[start:end] = replacement
+elif not any('local gaming_autostart="$bin/mechos-gaming-layer-autostart"' in line for line in lines):
+    raise SystemExit('Creator gaming-layer gate compatibility point was not found; refusing a blind patch')
+
+old_check = 'grep -Fq \'MECHOS_CREATOR_POSTINSTALL_GATE\' "$ROOT/usr/local/bin/mechos-gaming-shell" || fail "MechScope startup gate is missing"'
+new_check = 'grep -Fq \'MECHOS_CREATOR_POSTINSTALL_GATE\' "$ROOT/usr/local/bin/mechos-gaming-layer-autostart" || fail "MechScope gaming-layer startup gate is missing"'
+if old_check in lines:
+    lines[lines.index(old_check)] = new_check
+elif new_check not in lines:
+    raise SystemExit('Creator postinstall final gate validation point was not found')
+
 path.write_text(chr(10).join(lines) + chr(10), encoding='utf-8')
 PY
 bash /workspace/scripts/mechos-creator-postinstall-integration.sh final
