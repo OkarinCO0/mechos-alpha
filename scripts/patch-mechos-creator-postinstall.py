@@ -68,7 +68,7 @@ if old_gate_start in lines:
         raise SystemExit('Old Creator gaming-shell gate block was not complete; refusing a blind patch')
     replacement = [
         '  local gaming_autostart="$bin/mechos-gaming-layer-autostart"',
-        '  if [ -f "$gaming_autostart" ] && ! grep -Fq \'MECHOS_CREATOR_POSTINSTALL_GATE\' "$gaming_autostart"; then',
+        '  if [ -f "$gaming_autostart" ] && ! grep -Fq MECHOS_CREATOR_POSTINSTALL_GATE "$gaming_autostart"; then',
         '    tmp_gate="$(mktemp)"',
         '    {',
         '      head -n1 "$gaming_autostart"',
@@ -90,8 +90,8 @@ if old_gate_start in lines:
 elif not any('local gaming_autostart="$bin/mechos-gaming-layer-autostart"' in line for line in lines):
     raise SystemExit('Creator gaming-layer gate compatibility point was not found; refusing a blind patch')
 
-old_check = 'grep -Fq \'MECHOS_CREATOR_POSTINSTALL_GATE\' "$ROOT/usr/local/bin/mechos-gaming-shell" || fail "MechScope startup gate is missing"'
-new_check = 'grep -Fq \'MECHOS_CREATOR_POSTINSTALL_GATE\' "$ROOT/usr/local/bin/mechos-gaming-layer-autostart" || fail "MechScope gaming-layer startup gate is missing"'
+old_check = 'grep -Fq MECHOS_CREATOR_POSTINSTALL_GATE "$ROOT/usr/local/bin/mechos-gaming-shell" || fail "MechScope startup gate is missing"'
+new_check = 'grep -Fq MECHOS_CREATOR_POSTINSTALL_GATE "$ROOT/usr/local/bin/mechos-gaming-layer-autostart" || fail "MechScope gaming-layer startup gate is missing"'
 if old_check in lines:
     lines[lines.index(old_check)] = new_check
 elif new_check not in lines:
