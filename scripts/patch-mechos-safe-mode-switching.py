@@ -10,6 +10,9 @@ CALL = f"""{MARKER}
 # Keep Plasma as the persistent graphical session and run MechScope/Gamescope
 # as a reversible fullscreen layer instead of replacing the login session.
 bash /workspace/scripts/mechos-safe-mode-switching-integration.sh final
+# Retry nested Gamescope with an alternate backend and detect instant startup
+# failures before falling back to the persistent Plasma desktop.
+bash /workspace/scripts/mechos-gamescope-amd-compat-integration.sh final
 
 """
 
@@ -32,7 +35,10 @@ def main() -> None:
         rf"\n{re.escape(MARKER)}\n"
         r"# Keep Plasma as the persistent graphical session and run MechScope/Gamescope\n"
         r"# as a reversible fullscreen layer instead of replacing the login session\.\n"
-        r"bash /workspace/scripts/mechos-safe-mode-switching-integration\.sh final\n\n",
+        r"bash /workspace/scripts/mechos-safe-mode-switching-integration\.sh final\n"
+        r"(?:# Retry nested Gamescope with an alternate backend and detect instant startup\n"
+        r"# failures before falling back to the persistent Plasma desktop\.\n"
+        r"bash /workspace/scripts/mechos-gamescope-amd-compat-integration\.sh final\n)?\n",
         "\n",
         text,
     )
@@ -48,7 +54,7 @@ def main() -> None:
     if text.count(MARKER) != 1:
         fail("safe mode-switch marker count is not exactly one")
 
-    print(f"[MechOS mode-switch patcher] safe in-session switching added to {target}")
+    print(f"[MechOS mode-switch patcher] safe in-session switching and Gamescope compatibility added to {target}")
 
 
 if __name__ == "__main__":
