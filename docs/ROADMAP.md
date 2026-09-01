@@ -57,6 +57,25 @@
 - provide a user-facing GPU details page with detected hardware, installed driver package/version, Vulkan status, MechScope status, known limitations and recommended fixes
 - feed anonymous/manual test results into a reviewable compatibility matrix so specific GPU models can move from Untested to Compatible or Verified only after real hardware testing
 
+### Per-game power profiles
+
+- add a **Power Profile** control to each game in MechScope with built-in **Efficiency**, **Balanced**, **Performance** and **Custom** profiles plus a system-wide default
+- identify games by Steam App ID when available and fall back to executable/path and launcher metadata for Lutris, Heroic and direct MechScope launches
+- use Feral GameMode as the base temporary optimization layer so CPU governor, I/O priority, process priority, screensaver inhibition and supported GPU performance-state requests can activate only while the game is running
+- use a MechOS per-game supervisor/wrapper rather than depending on GameMode having a separate `gamemode.ini` for every title; the supervisor should select the MechOS profile, request GameMode for the game process and restore state when the game exits
+- integrate `powerprofilesctl` when the platform exposes power-profiles-daemon profiles and use safe `cpupower`/governor fallback logic only where the detected platform supports it
+- allow per-game CPU policy choices such as powersave/efficiency, balanced/default and performance without requiring permanent global governor changes
+- allow safe vendor-supported GPU performance-mode selection for AMD, Intel and NVIDIA where exposed by the installed driver, but do **not** change clocks, voltage, power limits or enable automatic GPU overclocking as part of normal power profiles
+- integrate hybrid-GPU/PRIME selection so a per-game profile can prefer the discrete GPU on supported laptops while cleanly falling back when offload is unavailable
+- support AC-power and battery-aware behavior so laptops can automatically use a lower-power game profile on battery or ask before switching to a high-performance profile
+- restore the previous CPU/platform/GPU power state after normal game exit, crash, launcher failure or MechScope restart so a game cannot leave the desktop permanently stuck in a high-power mode
+- provide a MechScope **Settings > Performance > Game Power Profiles** page showing the active game, selected profile, CPU/platform power state, GameMode state, GPU/offload state and whether each requested optimization was actually applied
+- add controller-first profile selection from a game's properties page and an optional Quick Actions shortcut for temporarily overriding the current game's power profile
+- expose per-game profile inheritance so users can set a global default, launcher default or individual-game override without duplicating configuration
+- store user-created power profiles as readable local MechOS profile data and allow reviewed built-in game recommendations to be updated through the MechOS update/hotfix channel without overwriting user choices
+- connect profile recommendations to the GPU compatibility database so unsupported driver/GPU controls are skipped instead of being applied blindly
+- add diagnostics for profile activation/restore failures and include active power-profile state in the MechOS optimization report for performance troubleshooting
+
 ### Creator Mode and Windows creator tools
 
 - expand the Creator Mode Store with verified Windows-only creator applications that are usable on MechOS through supported Wine, Bottles, Lutris or Proton-based compatibility paths where appropriate
