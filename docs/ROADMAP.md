@@ -13,6 +13,23 @@
 - Live-versus-installed runtime separation
 - Automated static validation on pull requests and `main`
 
+## 0.3.1 — planned
+
+- MechScope Downloads button in the main top-right status area
+- compact SteamOS-style Downloads dropdown that opens on the MechScope main page
+- scrollable download queue with a fixed header/footer
+- MechOS neon-styled progress bars with download percentage, speed, size, ETA and install state
+- queued, downloading, installing, paused, completed and failed/retry states
+- controller, keyboard, mouse and touch navigation for the Downloads dropdown
+- shortcut to Steam Downloads while keeping Steam game downloads controlled by Steam
+- MechOS-managed Creator Mode, Flatpak and system-update jobs shown in the unified Downloads UI when supported
+- MechScope Settings > System Update section with a prominent **Check for Updates / Update MechOS** button
+- update badge/notification in MechScope when a MechOS update or hotfix is available
+- signed MechOS hotfix channel for small reviewed fixes such as `0.3.0-HF1`, `HF2`, etc.
+- normal MechOS release update channel for upgrades such as `0.3.0 -> 0.3.1`
+- pre-update Snapper snapshot and rollback protection before MechOS hotfix/update installation when supported
+- update history, release notes, reboot-required state and failed-update recovery surfaced through the MechOS Update Center
+
 ## 0.3.x stabilization
 
 - complete clean-VM install test matrix
