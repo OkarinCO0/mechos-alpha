@@ -65,6 +65,25 @@
 - keep the disposable Live ISO non-updatable; Live users should download a newer ISO while installed systems receive supported hotfixes and release upgrades through Update Center
 - integrate OTA jobs into the planned MechScope Downloads UI with download progress, verification, install state, failure/retry status and restart-required notification
 
+### Post-install network connection setup
+
+- add a dedicated **Network Connection** step to the installed-system post-install/OOBE flow before optional Creator downloads and the first MechScope handoff
+- use NetworkManager as the backend so the setup screen works with the same networking stack used by Plasma after setup finishes
+- automatically detect wired Ethernet, Wi-Fi adapters and currently active connections and clearly show whether the system already has working network access
+- list nearby Wi-Fi networks with SSID, signal strength and security state, with **Refresh**, **Connect**, **Disconnect** and **Use Current Connection** actions
+- support password-protected Wi-Fi and hidden-network entry without storing Wi-Fi passwords in MechOS-specific plaintext configuration files; credentials remain managed through NetworkManager's normal connection storage
+- allow users with multiple network adapters to choose which Ethernet or Wi-Fi device they want to use during first setup
+- provide controller, keyboard, mouse and touch navigation so post-install networking can be completed without dropping to the Plasma desktop
+- add a simple connection test after selection that checks local link, gateway/DNS and internet reachability separately so a local network is not incorrectly reported as completely offline
+- detect common captive-portal situations when possible and provide an **Open Sign-In Page** action using the system browser rather than attempting to bypass portal authentication
+- allow **Continue Offline** at all times; lack of internet must not trap the user in OOBE or prevent MechOS from reaching Desktop Mode/MechScope
+- if networking is skipped or fails, clearly mark online-dependent Creator installs, Flatpak downloads, updates and sign-ins as pending instead of presenting them as broken
+- persist the selected NetworkManager connection for normal installed-system use so the same network can reconnect automatically after reboot when the user chooses auto-connect
+- provide an optional **Forget Network** action for connections created during OOBE and preserve existing connections when the user chooses to keep them
+- expose basic troubleshooting details such as adapter name, driver, IP address, gateway, DNS state and NetworkManager connection state without requiring terminal commands
+- add **Network Setup** to MechScope Settings/Quick Actions after installation so the same controller-friendly network selector can be reopened later
+- include post-install network status and connection failures in MechOS diagnostics while excluding saved Wi-Fi passwords and other credentials from diagnostic reports
+
 ### MechBrowser
 
 - add a controller-friendly **MechBrowser** entry directly to the MechScope home/Quick Access experience so users can browse without switching to Desktop Mode
