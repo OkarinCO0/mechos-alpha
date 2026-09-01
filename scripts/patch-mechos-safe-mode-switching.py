@@ -16,6 +16,9 @@ bash /workspace/scripts/mechos-gamescope-amd-compat-integration.sh final
 # The Desktop -> MechScope launcher is a normal user-session action. It must not
 # use loginctl, sudo, pkexec, or anything else that can request a password.
 bash /workspace/scripts/mechos-passwordless-return-integration.sh final
+# Discord uses the same user-session PipeWire/portal path in MechScope, Desktop
+# and Creator Mode so screen sharing does not require switching sessions.
+bash /workspace/scripts/mechos-discord-screenshare-integration.sh final
 
 """
 
@@ -44,7 +47,10 @@ def main() -> None:
         r"bash /workspace/scripts/mechos-gamescope-amd-compat-integration\.sh final\n)?"
         r"(?:# The Desktop -> MechScope launcher is a normal user-session action\. It must not\n"
         r"# use loginctl, sudo, pkexec, or anything else that can request a password\.\n"
-        r"bash /workspace/scripts/mechos-passwordless-return-integration\.sh final\n)?\n",
+        r"bash /workspace/scripts/mechos-passwordless-return-integration\.sh final\n)?"
+        r"(?:# Discord uses the same user-session PipeWire/portal path in MechScope, Desktop\n"
+        r"# and Creator Mode so screen sharing does not require switching sessions\.\n"
+        r"bash /workspace/scripts/mechos-discord-screenshare-integration\.sh final\n)?\n",
         "\n",
         text,
     )
@@ -61,8 +67,8 @@ def main() -> None:
         fail("safe mode-switch marker count is not exactly one")
 
     print(
-        f"[MechOS mode-switch patcher] safe in-session switching, Gamescope compatibility "
-        f"and passwordless return added to {target}"
+        f"[MechOS mode-switch patcher] safe in-session switching, Gamescope compatibility, "
+        f"passwordless return and Discord screen sharing added to {target}"
     )
 
 
