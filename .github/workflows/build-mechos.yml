@@ -40,6 +40,7 @@ jobs:
           python3 scripts/patch-mechos-default-wallpaper.py scripts/build-mechos-archiso.sh
           python3 scripts/patch-mechos-substance-painter.py scripts/build-mechos-archiso.sh
           python3 scripts/patch-mechos-creator-postinstall.py scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-rgb-quick-actions.py scripts/build-mechos-archiso.sh
           bash -n scripts/build-mechos-archiso.sh
           test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_EARLY$' scripts/build-mechos-archiso.sh)" -eq 1
           test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_LATE$' scripts/build-mechos-archiso.sh)" -eq 1
@@ -47,6 +48,7 @@ jobs:
           test "$(grep -c '^# MECHOS_DEFAULT_WALLPAPER_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
           test "$(grep -c '^# MECHOS_SUBSTANCE_PAINTER_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
           test "$(grep -c '^# MECHOS_CREATOR_POSTINSTALL_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
+          test "$(grep -c '^# MECHOS_RGB_QUICK_ACTIONS_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
 
       - name: Build MechOS ISO
         run: ./build-iso.sh
