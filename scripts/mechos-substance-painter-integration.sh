@@ -15,13 +15,23 @@ trap 'rc=$?; printf "[MechOS Substance Painter] ERROR: line %s failed: %s (exit 
 
 patch_creator_mode() {
   local tree="$1"
+  local required="${2:-required}"
   local public="$tree/usr/local/bin/mechos-creator-mode"
   local real="$tree/usr/local/bin/mechos-creator-mode.real"
-  local target="$public"
+  local target=""
 
-  [ -f "$public" ] || fail "Creator Mode launcher is missing: $public"
+  # Current MechOS keeps Creator Mode out of the Live SquashFS after the
+  # installed-system payload is packed. The installed payload remains the
+  # authoritative Creator Mode copy and must always be patched.
   if [ -f "$real" ]; then
     target="$real"
+  elif [ -f "$public" ]; then
+    target="$public"
+  elif [ "$required" = "optional" ]; then
+    log "Live Creator Mode is post-install-only; skipping Live store patch"
+    return 0
+  else
+    fail "Creator Mode launcher is missing from installed-system payload: $public"
   fi
 
   python3 - "$target" <<'PY'
@@ -109,15 +119,16 @@ PY
   log "Creator Mode store patched: $target"
 }
 
-# Patch the Live tree.
-patch_creator_mode "$ROOT"
+# Creator Mode is intentionally absent from the finished Live SquashFS in the
+# slim 0.3.0 layout. Patch it there only when a build variant still includes it.
+patch_creator_mode "$ROOT" optional
 
-# Keep the installed-system payload identical to the Live Creator Mode catalog.
+# The installed-system payload is authoritative and must contain Creator Mode.
 if [ -s "$ARCHIVE" ]; then
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
   tar --zstd -xf "$ARCHIVE" -C "$tmp"
-  patch_creator_mode "$tmp"
+  patch_creator_mode "$tmp" required
   new_archive="$ARCHIVE.substance-painter"
   tar --zstd -cpf "$new_archive" -C "$tmp" .
   mv -f "$new_archive" "$ARCHIVE"
@@ -127,4 +138,4 @@ else
   fail "installed-system payload archive is missing: $ARCHIVE"
 fi
 
-log "Substance 3D Painter 2026 added to Creator Mode App Store and Creator Tools"
+log "Substance 3D Painter 2026 added to installed Creator Mode App Store and Creator Tools"
