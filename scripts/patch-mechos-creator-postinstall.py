@@ -16,18 +16,20 @@ python3 - <<'PY'
 from pathlib import Path
 
 path = Path('/workspace/scripts/mechos-creator-postinstall-integration.sh')
-text = path.read_text(encoding='utf-8')
-old = '  [ -f "$creator" ] || fail "Creator Mode executable is missing in $tree"\n'
-new = '''  if [ ! -f "$creator" ]; then
-    log "Creator Mode is post-install-only in $tree; keeping category manifests and post-install runtime without patching a Live Creator executable"
-    return 0
-  fi
-'''
-if old in text:
-    text = text.replace(old, new, 1)
-elif 'Creator Mode is post-install-only in $tree' not in text:
+lines = path.read_text(encoding='utf-8').splitlines()
+needle = '  [ -f "$creator" ] || fail "Creator Mode executable is missing in $tree"'
+replacement = [
+    '  if [ ! -f "$creator" ]; then',
+    '    log "Creator Mode is post-install-only in $tree; keeping category manifests and post-install runtime without patching a Live Creator executable"',
+    '    return 0',
+    '  fi',
+]
+if needle in lines:
+    index = lines.index(needle)
+    lines[index:index + 1] = replacement
+elif not any('Creator Mode is post-install-only in $tree' in line for line in lines):
     raise SystemExit('Creator post-install compatibility point was not found; refusing a blind patch')
-path.write_text(text, encoding='utf-8')
+path.write_text(chr(10).join(lines) + chr(10), encoding='utf-8')
 PY
 bash /workspace/scripts/mechos-creator-postinstall-integration.sh final
 
