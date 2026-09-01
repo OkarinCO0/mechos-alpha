@@ -238,8 +238,16 @@ EOF
 
 patch_quick_actions() {
   local tree="$1"
+  local required="${2:-yes}"
   local target="$tree/usr/local/bin/mechos-quick-actions"
-  [ -s "$target" ] || fail "Quick Actions target missing: $target"
+
+  if [ ! -s "$target" ]; then
+    if [ "$required" = "no" ]; then
+      log "Quick Actions is post-install-only in $tree; skipping Live Quick Actions RGB patch"
+      return 0
+    fi
+    fail "Quick Actions target missing from installed payload: $target"
+  fi
 
   python3 - "$target" <<'PY'
 from pathlib import Path
@@ -264,7 +272,7 @@ PY
 
 patch_postinstall_packages "$POSTINSTALL"
 install_rgb_stack "$ROOT"
-patch_quick_actions "$ROOT"
+patch_quick_actions "$ROOT" no
 
 TMP="$(mktemp -d)"
 cleanup() { rm -rf "$TMP"; }
@@ -272,15 +280,22 @@ trap cleanup EXIT
 
 tar --zstd -xpf "$ROOTFS_ARCHIVE" -C "$TMP"
 install_rgb_stack "$TMP"
-patch_quick_actions "$TMP"
+patch_quick_actions "$TMP" yes
+
+# The installed-system payload is authoritative for MechScope Quick Actions.
+[ -x "$TMP/usr/local/bin/mechos-rgb-keyboard" ] || fail "Installed RGB helper missing"
+grep -qF "$MARKER" "$TMP/usr/local/bin/mechos-quick-actions" || fail "Installed Quick Actions RGB control missing"
 
 tar --zstd -cpf "$ROOTFS_ARCHIVE.new" -C "$TMP" .
 mv -f "$ROOTFS_ARCHIVE.new" "$ROOTFS_ARCHIVE"
 
-# Final assertions cover both the Live environment and the installed payload.
+# OpenRGB itself is available in both environments, but Quick Actions may be
+# intentionally post-install-only after the footprint pass.
 grep -qxF 'openrgb' "$PACKAGES" || fail "OpenRGB missing from Live package list"
 grep -q 'brightnessctl openrgb' "$POSTINSTALL" || fail "OpenRGB missing from installed-system package list"
 [ -x "$ROOT/usr/local/bin/mechos-rgb-keyboard" ] || fail "Live RGB helper missing"
-grep -qF "$MARKER" "$ROOT/usr/local/bin/mechos-quick-actions" || fail "Live Quick Actions RGB control missing"
+if [ -s "$ROOT/usr/local/bin/mechos-quick-actions" ]; then
+  grep -qF "$MARKER" "$ROOT/usr/local/bin/mechos-quick-actions" || fail "Live Quick Actions RGB control missing"
+fi
 
-log "OpenRGB keyboard support and Quick Actions color controls are integrated"
+log "OpenRGB keyboard support and installed MechScope Quick Actions color controls are integrated"
