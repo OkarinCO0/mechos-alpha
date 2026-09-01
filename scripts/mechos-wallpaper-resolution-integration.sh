@@ -69,13 +69,22 @@ PY
 
 resize_tree "$ROOT"
 
-# The installed-system payload is generated before this late integration. Apply
-# the same 1920x1080 wallpaper set to that archive so installed MechOS matches
-# the Live ISO rather than keeping the original image dimensions.
+# The installed-system payload is generated before this late integration. Some
+# earlier payload stages intentionally copy only the default wallpaper, so do
+# not assume the archive already contains the complete wallpaper collection.
+# Seed the installed payload from the finalized Live wallpaper set, then run
+# the same exact 1920x1080 validation on the installed copy.
 if [ -s "$ARCHIVE" ]; then
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
   tar --zstd -xf "$ARCHIVE" -C "$tmp"
+
+  live_wallpapers="$ROOT/usr/share/backgrounds/mechos"
+  installed_wallpapers="$tmp/usr/share/backgrounds/mechos"
+  mkdir -p "$installed_wallpapers"
+  find "$installed_wallpapers" -maxdepth 1 -type f -name 'mechos-wallpaper-*.jpg' -delete
+  cp -a "$live_wallpapers"/mechos-wallpaper-*.jpg "$installed_wallpapers"/
+
   resize_tree "$tmp"
   new_archive="$ARCHIVE.wallpapers-1080p"
   tar --zstd -cf "$new_archive" -C "$tmp" .
@@ -84,4 +93,4 @@ if [ -s "$ARCHIVE" ]; then
   trap - EXIT
 fi
 
-log "All 19 MechOS wallpapers normalized to 1920x1080 without aspect-ratio stretching"
+log "All 19 MechOS wallpapers normalized to 1920x1080 in Live and installed payloads"
