@@ -76,6 +76,28 @@
 - connect profile recommendations to the GPU compatibility database so unsupported driver/GPU controls are skipped instead of being applied blindly
 - add diagnostics for profile activation/restore failures and include active power-profile state in the MechOS optimization report for performance troubleshooting
 
+### Game crash protection and recovery
+
+- add a MechOS **Game Crash Protection** supervisor around MechScope-launched games; the goal is to contain crashes, restore the gaming session and collect useful diagnostics rather than claiming MechOS can prevent every game or engine crash
+- track the game process tree, launcher/runner, Steam App ID or executable identity, Proton/Wine version, Gamescope state, GPU/driver state, active power profile and launch timestamp so an abnormal exit has enough context for troubleshooting
+- classify normal exits separately from crashes, signals, launcher failures and forced termination so MechScope does not show false crash warnings every time a user closes a game normally
+- keep each launched game in a managed process group/user scope where practical so orphaned Wine/Proton/helper processes can be detected and cleaned up after an abnormal exit without killing unrelated desktop applications
+- immediately restore the previous GameMode, CPU/platform power profile, GPU/offload state and other temporary MechOS per-game settings after a crash, matching GameMode's existing ability to clean up after exited clients
+- return directly to the MechScope library/home screen when the game process crashes instead of leaving the user on a black screen, frozen launch card or abandoned fullscreen session
+- if Gamescope remains healthy, recover only the game; if the Gamescope gaming layer itself fails, attempt one controlled gaming-layer restart and then fall back to the persistent Plasma session instead of entering a restart loop
+- use `systemd-coredump`/`coredumpctl` when available to record crash metadata and stack information for native Linux processes, with storage/retention limits so crash diagnostics cannot fill the system drive
+- capture per-title Proton/Wine logs only when enabled or when a crash-recovery diagnostic session is requested, and rotate old logs automatically to avoid permanent disk and performance overhead
+- add a controller-friendly **Game Crashed** screen with **Relaunch**, **Safe Relaunch**, **View Details**, **Open Troubleshooter** and **Return to Library** actions
+- make **Safe Relaunch** temporarily disable optional MechOS-added launch tweaks such as custom overlays, custom power-profile overrides and nonessential launch arguments while preserving the game's normal security/anti-cheat requirements and the user's original saved configuration
+- detect repeated crashes for the same title within a short session and stop automatic relaunch attempts; offer Safe Relaunch or troubleshooting instead of creating an endless crash/restart loop
+- connect crash history to the Windows game compatibility database so a title/profile with repeated confirmed failures can be flagged for review without automatically changing another user's compatibility status
+- allow reviewed MechOS compatibility/hotfix data to recommend a different Proton/Wine runner or known-safe launch setting after a confirmed compatibility issue, while never silently replacing user-selected settings
+- add optional pre-launch backup/checkpoint support only for **known, explicitly mapped local save/config paths** and keep it opt-in; do not claim universal save protection because many games use proprietary launchers, cloud saves or unknown/custom save locations
+- surface Steam Cloud or launcher-managed cloud-save status when it can be read safely, but leave synchronization ownership to Steam/the game launcher rather than attempting to replace or bypass it
+- cap crash dump, Proton/Wine log and recovery-history storage with automatic rotation and a user-facing **Clear Crash Data** control
+- keep crash reports local by default; require explicit user permission before attaching logs or hardware data to a bug report, RadarAI report or future MechOS compatibility submission
+- add crash diagnostics to the MechOS Optimization Report, including abnormal-exit count, last crash reason when known, recovery action taken, power-profile restoration result and Gamescope recovery result
+
 ### Creator Mode and Windows creator tools
 
 - expand the Creator Mode Store with verified Windows-only creator applications that are usable on MechOS through supported Wine, Bottles, Lutris or Proton-based compatibility paths where appropriate
