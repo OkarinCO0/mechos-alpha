@@ -6,9 +6,29 @@ import sys
 from pathlib import Path
 
 MARKER = "# MECHOS_CREATOR_POSTINSTALL_INTEGRATION"
-CALL = f"""{MARKER}
+CALL = MARKER + """
 # Keep Creator applications out of the base image and offer them as an
 # opt-in step after account setup, before MechScope starts.
+# Creator Mode itself is post-install-only after the footprint pass, so make
+# the Creator post-install integration tolerate the intentionally absent Live
+# executable while still requiring and patching the installed payload copy.
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path('/workspace/scripts/mechos-creator-postinstall-integration.sh')
+text = path.read_text(encoding='utf-8')
+old = '  [ -f "$creator" ] || fail "Creator Mode executable is missing in $tree"\n'
+new = '''  if [ ! -f "$creator" ]; then
+    log "Creator Mode is post-install-only in $tree; keeping category manifests and post-install runtime without patching a Live Creator executable"
+    return 0
+  fi
+'''
+if old in text:
+    text = text.replace(old, new, 1)
+elif 'Creator Mode is post-install-only in $tree' not in text:
+    raise SystemExit('Creator post-install compatibility point was not found; refusing a blind patch')
+path.write_text(text, encoding='utf-8')
+PY
 bash /workspace/scripts/mechos-creator-postinstall-integration.sh final
 
 """
@@ -26,12 +46,11 @@ def main() -> None:
         fail("target does not look like a shell builder")
 
     text = re.sub(
-        rf"\n{re.escape(MARKER)}\n"
-        r"# Keep Creator applications out of the base image and offer them as an\n"
-        r"# opt-in step after account setup, before MechScope starts\.\n"
+        rf"\n{re.escape(MARKER)}\n.*?"
         r"bash /workspace/scripts/mechos-creator-postinstall-integration\.sh final\n\n",
         "\n",
         text,
+        flags=re.S,
     )
 
     mk_matches = list(re.finditer(r"(?m)^(?!\s*#).*\bmkarchiso\b.*$", text))
