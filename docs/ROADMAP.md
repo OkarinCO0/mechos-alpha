@@ -29,6 +29,15 @@
 - normal MechOS release update channel for upgrades such as `0.3.0 -> 0.3.1`
 - pre-update Snapper snapshot and rollback protection before MechOS hotfix/update installation when supported
 - update history, release notes, reboot-required state and failed-update recovery surfaced through the MechOS Update Center
+- USB4 and Thunderbolt-class device support using the Linux kernel and userspace authorization stack supported by the detected hardware
+- MechScope/Settings USB4 device status for docks, storage, displays, networking and compatible external PCIe/eGPU devices
+- USB4 hot-plug detection, connection/authorization status, reconnect handling and hardware diagnostics without promising support for devices unsupported by the Linux kernel or vendor firmware
+- controller layout manager inside MechScope Settings with built-in Xbox, PlayStation, Nintendo/Switch Pro, Steam Controller/Steam Input and generic SDL-compatible layouts
+- per-controller layout profiles with button remapping, stick inversion, deadzones, trigger ranges, sensitivity, controller order and profile save/restore
+- advanced controller support for USB and Bluetooth pairing, battery state, calibration, input testing and disconnect/reconnect handling
+- advanced mappings for supported gyro, touchpad, rear paddles/extra buttons, rumble/haptics and controller shortcut chords while falling back cleanly when hardware features are unavailable
+- separate Desktop and MechScope controller profiles plus optional per-game layout handoff through Steam Input where Steam manages the title
+- controller-first navigation and an on-screen controller test/calibration page so every mapped input can be verified before launching a game
 
 ## 0.3.x stabilization
 
