@@ -90,11 +90,21 @@ if old_gate_start in lines:
 elif not any('local gaming_autostart="$bin/mechos-gaming-layer-autostart"' in line for line in lines):
     raise SystemExit('Creator gaming-layer gate compatibility point was not found; refusing a blind patch')
 
-old_check = 'grep -Fq MECHOS_CREATOR_POSTINSTALL_GATE "$ROOT/usr/local/bin/mechos-gaming-shell" || fail "MechScope startup gate is missing"'
+# Replace the old final validation semantically instead of depending on whether
+# the source happens to quote the grep marker with single or double quotes.
 new_check = 'grep -Fq MECHOS_CREATOR_POSTINSTALL_GATE "$ROOT/usr/local/bin/mechos-gaming-layer-autostart" || fail "MechScope gaming-layer startup gate is missing"'
-if old_check in lines:
-    lines[lines.index(old_check)] = new_check
-elif new_check not in lines:
+replaced_check = False
+for i, line in enumerate(lines):
+    if (
+        line.startswith('grep -Fq ')
+        and 'MECHOS_CREATOR_POSTINSTALL_GATE' in line
+        and 'mechos-gaming-shell' in line
+        and 'startup gate is missing' in line
+    ):
+        lines[i] = new_check
+        replaced_check = True
+        break
+if not replaced_check and new_check not in lines:
     raise SystemExit('Creator postinstall final gate validation point was not found')
 
 path.write_text(chr(10).join(lines) + chr(10), encoding='utf-8')
