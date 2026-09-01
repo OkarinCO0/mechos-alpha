@@ -15,6 +15,18 @@
 
 ## 0.3.1 — planned
 
+### MechScope boot experience
+
+- dedicated animated MechScope startup splash after the normal MechOS system boot screen and before the MechScope home page
+- centered MechOS/MechScope emblem and **MECHSCOPE** branding with the existing dark blue/purple neon visual language
+- blue-to-purple loading/progress line designed to match the MechOS UI theme
+- short startup status messages such as **Loading Gaming Services**, **Starting Gamescope**, **Controller Ready**, **Network Ready** and **Launching MechScope** when those states can be detected reliably
+- keep the persistent Plasma session hidden behind the gaming layer so startup feels like a dedicated console rather than exposing a desktop handoff
+- smooth transition from the startup splash directly into the MechScope home screen
+- retain Gamescope startup with direct-fullscreen MechScope fallback when Gamescope fails so the visual boot experience cannot leave the user stuck on the splash
+- keep startup lightweight with no heavy looping video requirement; use efficient animation/static assets so boot performance remains the priority
+- allow the splash to surface a clear recovery/fallback message when MechScope or Gamescope cannot start instead of silently hanging
+
 ### MechScope downloads and updates
 
 - MechScope Downloads button in the main top-right status area
