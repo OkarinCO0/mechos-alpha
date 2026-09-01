@@ -10,6 +10,9 @@ CALL = f"""{MARKER}
 # Apply the branded MechOS Plasma wallpaper to Live and installed systems on
 # first login without overwriting later user wallpaper choices.
 bash /workspace/scripts/mechos-default-wallpaper-integration.sh final
+# Normalize the complete bundled wallpaper set to exact 1920x1080 desktop
+# images while preserving artwork aspect ratio with a center-cropped cover fit.
+bash /workspace/scripts/mechos-wallpaper-resolution-integration.sh final
 
 """
 
@@ -31,7 +34,10 @@ def main() -> None:
         rf"\n{re.escape(MARKER)}\n"
         r"# Apply the branded MechOS Plasma wallpaper to Live and installed systems on\n"
         r"# first login without overwriting later user wallpaper choices\.\n"
-        r"bash /workspace/scripts/mechos-default-wallpaper-integration\.sh final\n\n",
+        r"bash /workspace/scripts/mechos-default-wallpaper-integration\.sh final\n"
+        r"(?:# Normalize the complete bundled wallpaper set to exact 1920x1080 desktop\n"
+        r"# images while preserving artwork aspect ratio with a center-cropped cover fit\.\n"
+        r"bash /workspace/scripts/mechos-wallpaper-resolution-integration\.sh final\n)?\n",
         "\n",
         text,
     )
@@ -46,8 +52,10 @@ def main() -> None:
 
     if text.count(MARKER) != 1:
         fail("default wallpaper marker count is not exactly one")
+    if text.count("mechos-wallpaper-resolution-integration.sh final") != 1:
+        fail("wallpaper resolution integration count is not exactly one")
 
-    print(f"[MechOS wallpaper patcher] default wallpaper integration added to {target}")
+    print(f"[MechOS wallpaper patcher] default wallpaper + 1920x1080 normalization added to {target}")
 
 
 if __name__ == "__main__":
