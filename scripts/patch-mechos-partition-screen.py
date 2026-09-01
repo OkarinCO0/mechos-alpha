@@ -8,6 +8,9 @@ CALL = f"""{MARKER}
 # Add a dedicated read-only disk/partition selection screen to the Live
 # graphical installer while keeping Archinstall's destructive confirmation.
 bash /workspace/scripts/mechos-partition-screen-integration.sh final
+# Apply the responsive spacing/scroll layout after the partition step has
+# finished modifying the graphical installer so the final UI cannot be squashed.
+bash /workspace/scripts/mechos-installer-layout-hotfix.sh final
 """
 
 
@@ -27,7 +30,10 @@ def main() -> None:
         r"\n# MECHOS_PARTITION_SCREEN_INTEGRATION\n"
         r"# Add a dedicated read-only disk/partition selection screen[^\n]*\n"
         r"# graphical installer while keeping Archinstall's destructive confirmation\.\n"
-        r"bash /workspace/scripts/mechos-partition-screen-integration\.sh final\n",
+        r"bash /workspace/scripts/mechos-partition-screen-integration\.sh final\n"
+        r"(?:# Apply the responsive spacing/scroll layout after the partition step has\n"
+        r"# finished modifying the graphical installer so the final UI cannot be squashed\.\n"
+        r"bash /workspace/scripts/mechos-installer-layout-hotfix\.sh final\n)?",
         "\n",
         text,
     )
@@ -41,8 +47,10 @@ def main() -> None:
 
     if text.count(MARKER) != 1:
         fail("partition screen integration marker is not unique")
+    if text.count("bash /workspace/scripts/mechos-installer-layout-hotfix.sh final") != 1:
+        fail("installer layout hotfix call is not unique")
 
-    print(f"[MechOS partition patcher] partition screen wired into {target}")
+    print(f"[MechOS partition patcher] partition screen and responsive installer layout wired into {target}")
 
 
 if __name__ == "__main__":
