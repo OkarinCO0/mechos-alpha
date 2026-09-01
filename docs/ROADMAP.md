@@ -44,6 +44,27 @@
 - pre-update Snapper snapshot and rollback protection before MechOS hotfix/update installation when supported
 - update history, release notes, reboot-required state and failed-update recovery surfaced through the MechOS Update Center
 
+### MechOS OTA update system
+
+- upgrade the current Update Center from an Arch/Flatpak-focused updater into a true MechOS OTA updater capable of delivering reviewed MechOS-owned runtime, UI and compatibility changes without requiring a full ISO reinstall
+- publish a signed MechOS update manifest describing the update ID, channel, target MechOS version, required base version, changed packages/files, download locations, SHA-256 hashes, reboot requirement, release notes and rollback metadata
+- verify manifest signatures and package/file hashes before any MechOS-owned update is installed; reject incomplete, unsigned or mismatched update payloads instead of applying them partially
+- support lightweight hotfix releases such as **0.3.0-HF1**, **HF2** and **HF3** for MechScope, installer, RGB, Discord, compatibility profiles, recovery tools and other reviewed fixes that do not require users to download a replacement ISO
+- support normal release upgrades such as **0.3.0 -> 0.3.1** through the same Update Center when the upgrade path has been explicitly tested and approved
+- keep Arch repository updates and Flatpak updates as separate visible jobs so users can distinguish upstream package updates from MechOS-owned hotfixes and release upgrades
+- download MechOS update payloads into a dedicated cache first, validate them completely, then apply them transactionally rather than modifying live files while they are still downloading
+- create a Snapper pre-update snapshot when a supported root snapshot configuration exists and record the snapshot/update relationship so Recovery Center can offer a clear rollback target after a failed update
+- stage replacements for MechOS-owned files under paths such as `/usr/local/bin`, `/usr/share/mechos`, desktop launchers, compatibility data and configuration snippets using packaged ownership/version metadata instead of blindly copying arbitrary GitHub source files onto the installed system
+- restart only the affected MechOS user services/apps when safe, such as MechScope or helper daemons, and request a full reboot only for kernel, graphics-driver, systemd, bootloader or other reboot-sensitive changes
+- preserve user configuration, Creator Mode selections, game profiles, custom power profiles, browser data and other user-owned state during hotfixes and release upgrades unless a documented migration is required
+- add automatic rollback marking when a MechOS OTA transaction fails after changes begin, with Recovery Center options to inspect the failed update, restore the pre-update snapshot when available and retry later
+- add update history showing MechOS version/hotfix ID, installed time, result, changed components, reboot state and rollback information alongside the existing Arch/Flatpak history
+- expose release notes and a concise **What changed** summary before installation, including whether the update affects MechScope, drivers, Creator Mode, compatibility data, installer/recovery tools or only upstream packages
+- support **Stable** and later opt-in **Testing** channels, keeping Stable as the default and preventing automatic channel switching without explicit user action
+- do not execute arbitrary GitHub repository scripts directly on end-user systems; OTA content must come through reviewed, versioned and signed MechOS update artifacts/packages
+- keep the disposable Live ISO non-updatable; Live users should download a newer ISO while installed systems receive supported hotfixes and release upgrades through Update Center
+- integrate OTA jobs into the planned MechScope Downloads UI with download progress, verification, install state, failure/retry status and restart-required notification
+
 ### MechBrowser
 
 - add a controller-friendly **MechBrowser** entry directly to the MechScope home/Quick Access experience so users can browse without switching to Desktop Mode
