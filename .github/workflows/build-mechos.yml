@@ -36,9 +36,11 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/patch-mechos-current.py scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-safe-mode-switching.py scripts/build-mechos-archiso.sh
           bash -n scripts/build-mechos-archiso.sh
           test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_EARLY$' scripts/build-mechos-archiso.sh)" -eq 1
           test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_LATE$' scripts/build-mechos-archiso.sh)" -eq 1
+          test "$(grep -c '^# MECHOS_SAFE_MODE_SWITCHING_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
 
       - name: Build MechOS ISO
         run: ./build-iso.sh
