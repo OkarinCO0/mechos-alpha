@@ -44,6 +44,22 @@
 - pre-update Snapper snapshot and rollback protection before MechOS hotfix/update installation when supported
 - update history, release notes, reboot-required state and failed-update recovery surfaced through the MechOS Update Center
 
+### MechBrowser
+
+- add a controller-friendly **MechBrowser** entry directly to the MechScope home/Quick Access experience so users can browse without switching to Desktop Mode
+- use a maintained browser backend such as Firefox instead of creating a custom browser engine, keeping web security updates and site compatibility owned by the upstream browser
+- launch the browser as a managed fullscreen/windowed application inside the persistent Plasma/MechScope session so closing it returns directly to MechScope instead of ending the gaming session
+- provide large controller-first **Back**, **Forward**, **Refresh**, **Home**, address/search and tab controls while preserving normal browser keyboard and mouse behavior
+- add on-screen keyboard support for URL/search entry and make all primary browser actions navigable by controller, keyboard, mouse and touch
+- provide MechScope-friendly bookmarks/quick links for useful gaming destinations such as Steam Community, ProtonDB, PCGamingWiki, Discord, YouTube, Twitch and MechOS Help, while allowing users to add/remove their own favorites
+- keep standard browser profiles, cookies, saved logins, privacy controls and private-browsing behavior under the browser's normal user account rather than inventing a separate insecure MechOS credential store
+- save browser downloads to the user's normal Downloads folder and surface active/completed browser downloads in the planned MechScope Downloads UI when reliable integration is available
+- route web links opened from MechScope, Creator Mode, Discord helpers, game compatibility pages and the MechOS Store through MechBrowser when the user chooses the gaming-mode browser path
+- provide an obvious **Return to MechScope** action and correctly restore controller focus after the browser closes
+- keep browser processes unprivileged and preserve normal browser sandboxing; MechBrowser must never require root access merely to browse, download or sign in to websites
+- test video playback, WebRTC, Discord/voice web features, hardware video decode, fullscreen video and controller input on AMD, Intel and NVIDIA systems without making those features a requirement for basic browsing
+- defer an in-game **Game Companion Browser** overlay to a later phase after MechBrowser v1 is stable; that later mode can open guides/wikis from Quick Actions while a game is running and return cleanly to the game without adding unnecessary overhead to 0.3.1 v1
+
 ### GPU compatibility database
 
 - add a MechScope/Settings GPU compatibility database for AMD Radeon, Intel Arc/Iris/UHD and NVIDIA GeForce/RTX hardware
