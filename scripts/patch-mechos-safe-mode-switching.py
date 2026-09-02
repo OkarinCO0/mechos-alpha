@@ -16,6 +16,9 @@ bash /workspace/scripts/mechos-creator-mode-launch-hotfix.sh final
 # Retry nested Gamescope with an alternate backend and detect instant startup
 # failures before falling back to the persistent Plasma desktop.
 bash /workspace/scripts/mechos-gamescope-amd-compat-integration.sh final
+# Keep ordinary mode changes off the slow hardware-diagnostics path. Cache GPU
+# selection and make user-service start/stop handoffs non-blocking.
+bash /workspace/scripts/mechos-fast-mode-transitions-integration.sh final
 # The Desktop -> MechScope launcher is a normal user-session action. It must not
 # use loginctl, sudo, pkexec, or anything else that can request a password.
 bash /workspace/scripts/mechos-passwordless-return-integration.sh final
@@ -76,11 +79,14 @@ def main() -> None:
     hotfix_count = text.count("mechos-creator-mode-launch-hotfix.sh final")
     if hotfix_count != 1:
         fail(f"Creator Mode launch hotfix count is {hotfix_count}, expected 1")
+    fast_count = text.count("mechos-fast-mode-transitions-integration.sh final")
+    if fast_count != 1:
+        fail(f"fast mode-transition integration count is {fast_count}, expected 1")
 
     print(
         f"[MechOS mode-switch patcher] safe in-session switching, Creator Mode service handoff, "
-        f"Gamescope compatibility, passwordless mode switching, installed authentication policy "
-        f"and Discord screen sharing added to {target}"
+        f"Gamescope compatibility, fast mode transitions, passwordless switching, installed "
+        f"authentication policy and Discord screen sharing added to {target}"
     )
 
 
