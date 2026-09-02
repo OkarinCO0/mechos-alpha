@@ -10,6 +10,9 @@ CALL = f"""{MARKER}
 # Keep Plasma as the persistent graphical session and run MechScope/Gamescope
 # as a reversible fullscreen layer instead of replacing the login session.
 bash /workspace/scripts/mechos-safe-mode-switching-integration.sh final
+# Creator Mode must leave the gaming-layer cgroup before that layer shuts down.
+# Run it as an independent user service so the handoff cannot kill the UI.
+bash /workspace/scripts/mechos-creator-mode-launch-hotfix.sh final
 # Retry nested Gamescope with an alternate backend and detect instant startup
 # failures before falling back to the persistent Plasma desktop.
 bash /workspace/scripts/mechos-gamescope-amd-compat-integration.sh final
@@ -48,6 +51,9 @@ def main() -> None:
         r"# Keep Plasma as the persistent graphical session and run MechScope/Gamescope\n"
         r"# as a reversible fullscreen layer instead of replacing the login session\.\n"
         r"bash /workspace/scripts/mechos-safe-mode-switching-integration\.sh final\n"
+        r"(?:# Creator Mode must leave the gaming-layer cgroup before that layer shuts down\.\n"
+        r"# Run it as an independent user service so the handoff cannot kill the UI\.\n"
+        r"bash /workspace/scripts/mechos-creator-mode-launch-hotfix\.sh final\n)?"
         r"(?:# Retry nested Gamescope with an alternate backend and detect instant startup\n"
         r"# failures before falling back to the persistent Plasma desktop\.\n"
         r"bash /workspace/scripts/mechos-gamescope-amd-compat-integration\.sh final\n)?"
@@ -77,10 +83,13 @@ def main() -> None:
 
     if text.count(MARKER) != 1:
         fail("safe mode-switch marker count is not exactly one")
+    if text.count("mechos-creator-mode-launch-hotfix.sh final") != 1:
+        fail("Creator Mode launch hotfix is missing or duplicated")
 
     print(
-        f"[MechOS mode-switch patcher] safe in-session switching, Gamescope compatibility, "
-        f"passwordless mode switching, installed authentication policy and Discord screen sharing added to {target}"
+        f"[MechOS mode-switch patcher] safe in-session switching, Creator Mode service handoff, "
+        f"Gamescope compatibility, passwordless mode switching, installed authentication policy "
+        f"and Discord screen sharing added to {target}"
     )
 
 
