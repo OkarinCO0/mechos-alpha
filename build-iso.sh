@@ -32,6 +32,7 @@ docker run --rm --privileged \
   "$IMAGE" \
   bash -lc '
     set -Eeuo pipefail
+    bash /workspace/scripts/patch-mechos-live-autologin-partitionmanager.sh /workspace/scripts/build-mechos-archiso.sh
     bash /workspace/scripts/build-mechos-archiso.sh
     chown -R "${MECHOS_HOST_UID}:${MECHOS_HOST_GID}" /workspace/out
   '
