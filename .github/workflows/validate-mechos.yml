@@ -24,3 +24,4 @@ jobs:
           ./scripts/validate-project.sh
           bash scripts/validate-gamescope-universal.sh
           bash scripts/validate-native-installer.sh
+          bash scripts/validate-reference-ui.sh
