@@ -26,5 +26,6 @@ jobs:
           bash scripts/validate-native-installer.sh
           bash scripts/validate-reference-ui.sh
           bash scripts/validate-reference-stores-v3.sh
+          bash scripts/validate-reference-surfaces-v4.sh
           bash scripts/validate-radarai-performance-integration.sh
           bash scripts/validate-creator-mode-launch.sh
