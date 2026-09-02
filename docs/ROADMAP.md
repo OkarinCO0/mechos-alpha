@@ -168,12 +168,16 @@
 - package game-engine install scripts/helpers with required runtimes, launch entries, compatibility notes and version-specific setup instead of relying on undocumented manual installs
 - add the new creator tools and game engines to the Creator Mode Store page with categories, install/status buttons, compatibility badges and clear native/Flatpak/vendor/Windows-compatibility labels
 
-### Windows game compatibility and Store verification
+### Windows game compatibility and MechScope Unified Store verification
 
 - research Windows-only games outside the current MechScope store before listing them as compatible, including install path, launcher behavior, Proton/Wine version, graphics/runtime dependencies and known limitations
-- add verified compatible Windows games and their install/compatibility profiles to the MechScope store page rather than presenting untested titles as supported
+- add verified compatible Windows games and their install/compatibility profiles to the MechScope Unified Store rather than presenting untested titles as supported
 - provide per-game Linux compatibility setup scripts/helpers for verified Windows-only games, including required legitimate runtimes, launch options, prefixes and Proton/Wine selection where testing shows they are needed
 - add compatibility status labels such as **Verified**, **Playable**, **Needs Setup**, **Unsupported** and **Unknown/Untested** so users can see the expected state before installation
+- add **S.T.A.L.K.E.R. G.A.M.M.A.** as a planned MechScope Unified Store title for 0.3.1, with a controller-friendly install/manage entry and compatibility profile designed for MechOS
+- package an assisted S.T.A.L.K.E.R. G.A.M.M.A. setup workflow that configures a dedicated Proton/Wine prefix, a tested Proton-GE/UMU runner, Mod Organizer 2 integration, DX11 launch settings and required archive/runtime dependencies while leaving copyrighted game/mod downloads and license acceptance to their legitimate upstream sources
+- generate a MechScope library shortcut after a successful GAMMA setup, track the selected runner/prefix and expose **Install**, **Repair**, **Update Setup**, **Launch**, **Open MO2** and **Remove Integration** actions without deleting user-owned game/mod files unless explicitly requested
+- initially mark the GAMMA profile **Needs Setup/Testing** and promote it to **Playable** or **Verified** only after the complete install, launcher, save/load, MO2 and in-game test path has been validated on real MechOS hardware
 - integrate Steam, Epic, GOG, Amazon Games and Heroic-backed library/store paths where supported while keeping the actual game licenses and downloads controlled by their respective services
 - add anti-cheat compatibility setup/status helpers that install legitimate supported runtime prerequisites and surface the known Linux/Proton anti-cheat state for each game
 - never claim to bypass or defeat anti-cheat; games whose vendor or anti-cheat intentionally blocks Linux/Proton must be marked unsupported until the vendor enables support
