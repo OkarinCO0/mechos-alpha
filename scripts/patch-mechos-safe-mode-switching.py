@@ -36,6 +36,21 @@ def fail(message: str) -> None:
     raise SystemExit(f"[MechOS mode-switch patcher] ERROR: {message}")
 
 
+def strip_existing_block(text: str) -> str:
+    """Remove only this patcher's block, preserving other integration blocks."""
+    # Integration patchers all insert immediately before mkarchiso and use an
+    # all-caps MECHOS_* marker. Stop at the next integration marker or at the
+    # actual mkarchiso command. This is intentionally independent of the exact
+    # comments/commands inside older versions of this block.
+    pattern = re.compile(
+        rf"\n{re.escape(MARKER)}\n.*?(?="
+        rf"^# MECHOS_[A-Z0-9_]+(?:_INTEGRATION)?\s*$|"
+        rf"^(?!\s*#).*\bmkarchiso\b.*$)",
+        flags=re.S | re.M,
+    )
+    return pattern.sub("\n", text)
+
+
 def main() -> None:
     target = Path(sys.argv[1] if len(sys.argv) > 1 else "scripts/build-mechos-archiso.sh")
     if not target.is_file():
@@ -45,33 +60,7 @@ def main() -> None:
     if not text.startswith("#!"):
         fail("target does not look like a shell builder")
 
-    # Idempotent: remove any previous version of this integration block.
-    text = re.sub(
-        rf"\n{re.escape(MARKER)}\n"
-        r"# Keep Plasma as the persistent graphical session and run MechScope/Gamescope\n"
-        r"# as a reversible fullscreen layer instead of replacing the login session\.\n"
-        r"bash /workspace/scripts/mechos-safe-mode-switching-integration\.sh final\n"
-        r"(?:# Creator Mode must leave the gaming-layer cgroup before that layer shuts down\.\n"
-        r"# Run it as an independent user service so the handoff cannot kill the UI\.\n"
-        r"bash /workspace/scripts/mechos-creator-mode-launch-hotfix\.sh final\n)?"
-        r"(?:# Retry nested Gamescope with an alternate backend and detect instant startup\n"
-        r"# failures before falling back to the persistent Plasma desktop\.\n"
-        r"bash /workspace/scripts/mechos-gamescope-amd-compat-integration\.sh final\n)?"
-        r"(?:# The Desktop -> MechScope launcher is a normal user-session action\. It must not\n"
-        r"# use loginctl, sudo, pkexec, or anything else that can request a password\.\n"
-        r"bash /workspace/scripts/mechos-passwordless-return-integration\.sh final\n)?"
-        r"(?:# Installed systems authenticate after boot and resume, but never for mode switches\.\n"
-        r"bash /workspace/scripts/mechos-postinstall-auth-policy-integration\.sh final\n)?"
-        r"(?:# Creator Mode is wrapped by the first-run tutorial\. Teach the Discord\n"
-        r"# integration to patch mechos-creator-mode\.real instead of compiling the Bash wrapper\.\n"
-        r"python3 /workspace/scripts/patch-mechos-discord-creator-wrapper\.py \\\n"
-        r"  /workspace/scripts/mechos-discord-screenshare-integration\.sh\n)?"
-        r"(?:# Discord uses the same user-session PipeWire/portal path in MechScope, Desktop\n"
-        r"# and Creator Mode so screen sharing does not require switching sessions\.\n"
-        r"bash /workspace/scripts/mechos-discord-screenshare-integration\.sh final\n)?\n",
-        "\n",
-        text,
-    )
+    text = strip_existing_block(text)
 
     mk_matches = list(re.finditer(r"(?m)^(?!\s*#).*\bmkarchiso\b.*$", text))
     if not mk_matches:
