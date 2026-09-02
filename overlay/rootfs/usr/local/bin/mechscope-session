@@ -22,30 +22,40 @@ export XDG_CURRENT_DESKTOP=gamescope
 export STEAM_ALLOW_DRIVE_UNMOUNT=1
 export STEAM_GAMESCOPE_VRR_SUPPORTED=1
 export STEAM_GAMESCOPE_TEARING_SUPPORTED=1
-export STEAM_GAMESCOPE_HDR_SUPPORTED=1
 export STEAM_GAMESCOPE_FANCY_SCALING_SUPPORT=1
 export STEAM_GAMESCOPE_COLOR_MANAGED=1
-export STEAM_GAMESCOPE_VIRTUAL_WHITE=1
 export STEAM_MULTIPLE_XWAYLANDS=1
 export STEAM_DISABLE_AUDIO_DEVICE_SWITCHING=1
 export STEAM_UPDATEUI_PNG_BACKGROUND=/usr/share/backgrounds/mechos/mechscope-loading.png
+
+# HDR remains opt-in because GPU/driver support differs, especially on NVIDIA.
+if [[ "${MECHOS_HDR:-0}" == "1" ]]; then
+  export STEAM_GAMESCOPE_HDR_SUPPORTED=1
+  export STEAM_GAMESCOPE_VIRTUAL_WHITE=1
+fi
 
 if lspci 2>/dev/null | grep -qi nvidia; then
   export GBM_BACKEND=nvidia-drm
   export __GLX_VENDOR_LIBRARY_NAME=nvidia
 fi
 
-STEAM_CMD=(/usr/bin/steam -gamepadui -steamos3 -steampal -steamdeck)
+APP_CMD=(/usr/local/bin/mechscope)
 GS_ARGS=(-e -f)
 [[ "${MECHOS_DISABLE_VRR:-0}" != "1" ]] && GS_ARGS+=(--adaptive-sync)
 [[ "${MECHOS_HDR:-0}" == "1" ]] && GS_ARGS+=(--hdr-enabled)
 
-if [[ ! -x /usr/bin/gamescope || ! -x /usr/bin/steam ]]; then
+if [[ ! -x /usr/bin/gamescope || ! -x /usr/local/bin/mechscope ]]; then
   printf 'desktop\n' > "$MODE_FILE"
   if command -v notify-send >/dev/null 2>&1; then
-    notify-send 'MechScope' 'Steam or Gamescope is not ready yet. Opening Desktop Mode.' || true
+    notify-send 'MechScope' 'Gamescope or the MechScope shell is not ready. Opening the safe desktop fallback.' || true
+  fi
+  if command -v /usr/local/bin/mechscope >/dev/null 2>&1; then
+    (sleep 4; /usr/local/bin/mechscope >/dev/null 2>&1 &) || true
   fi
   exec /usr/bin/startplasma-wayland
 fi
 
-exec /usr/bin/gamescope "${GS_ARGS[@]}" -- "${STEAM_CMD[@]}"
+# This legacy entry now agrees with the primary mechos-gaming-session: the
+# custom MechScope shell owns Gaming Mode. Steam Gamepad UI is launched from
+# MechScope when the user selects Steam Library rather than replacing the OS UI.
+exec /usr/bin/gamescope "${GS_ARGS[@]}" -- "${APP_CMD[@]}"
