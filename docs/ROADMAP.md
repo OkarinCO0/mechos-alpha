@@ -202,6 +202,16 @@
 
 ## 0.4
 
+- MechOS Companion mobile app for Android/iOS with a controller-friendly remote dashboard for paired MechOS PCs
+- local-network-first pairing using a QR code or one-time pairing code, with encrypted authenticated connections and a clear paired-device/revoke screen
+- show PC online/offline state, active MechOS mode, currently running game/app and basic CPU/GPU/RAM/temperature status when available
+- remotely open MechScope, Desktop Mode or Creator Mode and launch approved games/apps from the paired PC without exposing unrestricted shell access
+- view Steam/MechOS download progress, OTA update state, reboot-required notices and recent update results from the phone
+- receive optional MechOS notifications for game crashes, RadarAI hardware/software alerts, failed updates, completed downloads and other user-enabled system events
+- provide streaming/recording controls, basic media controls and a mobile text-entry/virtual-touchpad mode to make typing and navigation easier from MechScope
+- provide confirmation-protected sleep, restart and shutdown actions and never allow sensitive system actions from an unpaired device
+- keep remote-control permissions granular so users can disable game launching, power controls, notifications, telemetry/status sharing or other companion capabilities independently
+- keep the first release local-network-only by default; defer internet/cloud remote access until a separately reviewed secure remote-access design is available
 - MechClip service and capture integration
 - VRChat creator workflow helpers
 - Unreal Engine authorized installer helper
