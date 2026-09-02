@@ -36,7 +36,7 @@ ui_path = Path(sys.argv[2])
 text = apply_path.read_text(encoding="utf-8")
 old = '    f"User={username}\\n"\n'
 new = '    "User=\\n"\n'
-if old not in text and '    "User=\\n"\n' not in text:
+if old not in text and new not in text:
     raise SystemExit(f"could not locate post-OOBE SDDM autologin user in {apply_path}")
 text = text.replace(old, new)
 apply_path.write_text(text, encoding="utf-8")
@@ -75,15 +75,25 @@ LOCK_EOF
     fi
   done
 
-  grep -Fq '"User=\\n"' "$oobe_apply" \
-    || fail "post-OOBE SDDM autologin was not disabled"
+  if grep -Fq 'f"User={username}' "$oobe_apply"; then
+    fail "post-OOBE SDDM autologin is still enabled for the created user"
+  fi
+  grep -Fq '    "User=' "$oobe_apply" \
+    || fail "post-OOBE SDDM config does not explicitly clear the autologin user"
   grep -Fq 'Autolock=false' "$lock_cfg" \
     || fail "installed idle-lock policy is missing"
   grep -Fq 'LockOnResume=true' "$lock_cfg" \
     || fail "installed resume-lock policy is missing"
 
-  python3 -m py_compile "$oobe_apply"
-  [ ! -f "$oobe_ui" ] || python3 -m py_compile "$oobe_ui"
+  python3 - "$oobe_apply" "$oobe_ui" <<'PY'
+import ast
+from pathlib import Path
+import sys
+for raw in sys.argv[1:]:
+    path = Path(raw)
+    if path.is_file():
+        ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+PY
   bash -n "$selector"
   bash -n "$return_cmd"
 }
