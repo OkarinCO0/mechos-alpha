@@ -3,6 +3,47 @@ set -Eeuo pipefail
 source /usr/local/lib/mechos/runtime.sh
 mechos_is_live || exit 0
 
+# The disposable Live ISO has no normal installed-user password workflow.
+# Disable Plasma's automatic lock screen only for the Live session so users
+# cannot be stranded behind an unlock prompt. Installed MechOS is unaffected.
+disable_live_lockscreen() {
+  mkdir -p "$HOME/.config"
+
+  if command -v kwriteconfig6 >/dev/null 2>&1; then
+    kwriteconfig6 --file kscreenlockerrc --group Daemon --key Autolock false || true
+    kwriteconfig6 --file kscreenlockerrc --group Daemon --key LockOnResume false || true
+    kwriteconfig6 --file kscreenlockerrc --group Daemon --key Timeout 0 || true
+  else
+    cat > "$HOME/.config/kscreenlockerrc" <<'LOCK_EOF'
+[Daemon]
+Autolock=false
+LockOnResume=false
+Timeout=0
+LOCK_EOF
+  fi
+
+  chmod 600 "$HOME/.config/kscreenlockerrc" 2>/dev/null || true
+
+  # Plasma 6 commonly exposes KScreenLocker as this user service. Mask it only
+  # for the current Live boot; --runtime disappears automatically at reboot.
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user stop plasma-kscreenlocker.service >/dev/null 2>&1 || true
+    systemctl --user mask --runtime plasma-kscreenlocker.service >/dev/null 2>&1 || true
+  fi
+
+  # If Plasma already activated the screen-saver interface during startup,
+  # request the unlocked/inactive state before showing the MechOS welcome UI.
+  if command -v qdbus6 >/dev/null 2>&1; then
+    qdbus6 org.freedesktop.ScreenSaver /ScreenSaver \
+      org.freedesktop.ScreenSaver.SetActive false >/dev/null 2>&1 || true
+  elif command -v qdbus >/dev/null 2>&1; then
+    qdbus org.freedesktop.ScreenSaver /ScreenSaver \
+      org.freedesktop.ScreenSaver.SetActive false >/dev/null 2>&1 || true
+  fi
+}
+
+disable_live_lockscreen
+
 # Do not reopen repeatedly during the same live login unless manually launched.
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
 SEEN="$RUNTIME_DIR/mechos-welcome-shown"
