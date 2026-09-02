@@ -36,12 +36,18 @@ marker = '# MECHOS_REFERENCE_UNIFIED_STORE_V3'
 if marker in text:
     raise SystemExit(0)
 
+if 'from urllib.parse import quote_plus' not in text:
+    text = 'from urllib.parse import quote_plus\n' + text
+
 start = text.find('class UnifiedStore(QDialog):')
 end = text.find('\nclass MechScope(QMainWindow):', start)
 if start < 0 or end < 0:
     raise SystemExit('[MechOS Reference Stores v3] could not locate UnifiedStore class')
 
-replacement = r'''class UnifiedStore(QDialog):
+# Triple-double quotes are deliberate here because the generated class contains
+# a triple-single-quoted QSS block. Keeping the delimiters different prevents
+# the QSS from terminating this generator string.
+replacement = r"""class UnifiedStore(QDialog):
     # MECHOS_REFERENCE_UNIFIED_STORE_V3
     STORES = [
         ("Steam", "Your primary PC game library", "https://store.steampowered.com/search/?term={query}", ["steam", "-gamepadui"]),
@@ -224,15 +230,10 @@ QLineEdit:focus { border:2px solid #a855f7; }
         return quote_plus(self.search.text().strip())
 
     def browse_selected(self):
-        name, _desc, url, _launcher = self.STORES[self.selected_store]
-        q = self.query()
-        target = url.format(query=q)
-        spawn(["xdg-open", target])
+        _name, _desc, url, _launcher = self.STORES[self.selected_store]
+        spawn(["xdg-open", url.format(query=self.query())])
 
     def search_selected(self):
-        if not self.search.text().strip():
-            self.browse_selected()
-            return
         self.browse_selected()
 
     def search_all(self):
@@ -254,7 +255,7 @@ QLineEdit:focus { border:2px solid #a855f7; }
         count = len(steam_games())
         QMessageBox.information(self, "Game Library", f"Library scan completed. {count} installed Steam game(s) detected. Heroic and Lutris continue managing their own downloads.")
 
-'''
+"""
 
 text = text[:start] + replacement + text[end:]
 path.write_text(text, encoding='utf-8')
@@ -279,15 +280,14 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text(encoding='utf-8')
 marker = '# MECHOS_REFERENCE_CREATOR_STORE_V3'
-if marker in text:
-    raise SystemExit(0)
 
-start = text.find('    def app_store(self):')
-end = text.find('\n    def new_project(self):', start)
-if start < 0 or end < 0:
-    raise SystemExit('[MechOS Reference Stores v3] could not locate Creator app_store()')
+if marker not in text:
+    start = text.find('    def app_store(self):')
+    end = text.find('\n    def new_project(self):', start)
+    if start < 0 or end < 0:
+        raise SystemExit('[MechOS Reference Stores v3] could not locate Creator app_store()')
 
-replacement = r'''    def app_store(self):
+    replacement = r'''    def app_store(self):
         # MECHOS_REFERENCE_CREATOR_STORE_V3
         s, v = self.scroll()
 
@@ -303,7 +303,7 @@ replacement = r'''    def app_store(self):
         title.setObjectName("title")
         title.setStyleSheet("font-size:34px;font-weight:900;color:white")
         copy.addWidget(title)
-        intro = QLabel("Install engines, 3D tools, art software, streaming apps and Windows compatibility tools from one controller-friendly MechOS surface. Existing install/status logic is preserved underneath this new storefront.")
+        intro = QLabel("Install engines, 3D tools, art software, streaming apps and Windows compatibility tools from one controller-friendly MechOS surface.")
         intro.setObjectName("muted")
         intro.setWordWrap(True)
         copy.addWidget(intro)
@@ -342,7 +342,6 @@ replacement = r'''    def app_store(self):
             b.clicked.connect(lambda _=False, i=index: (pages.setCurrentIndex(i), [x.setChecked(j == i) for j, x in enumerate(category_buttons)]))
             category_buttons.append(b)
             nl.addWidget(b)
-            return b
 
         def page_for(ids, columns=4, title_text='APPLICATIONS'):
             page = QWidget()
@@ -363,15 +362,12 @@ replacement = r'''    def app_store(self):
             pl.addStretch()
             return page
 
-        # Featured bundles page.
         featured_page = QWidget()
         fpl = QVBoxLayout(featured_page)
         h = QLabel("ONE-CLICK CREATOR BUNDLES")
         h.setObjectName("purple")
         fpl.addWidget(h)
         pg = QGridLayout()
-        pg.setHorizontalSpacing(16)
-        pg.setVerticalSpacing(16)
         for i, info in enumerate(PACKAGES):
             c = PackageCard(self, info)
             c.setMinimumHeight(190)
@@ -382,7 +378,6 @@ replacement = r'''    def app_store(self):
         note.setObjectName("muted")
         note.setWordWrap(True)
         fpl.addWidget(note)
-        fpl.addStretch()
         pages.addWidget(featured_page)
 
         pages.addWidget(page_for(None, 4, 'ALL CREATOR APPS'))
@@ -391,10 +386,7 @@ replacement = r'''    def app_store(self):
         pages.addWidget(page_for(['obs','audacity','lmms','discord'], 3, 'STREAMING & MEDIA'))
         pages.addWidget(page_for(['bottles','wine','winetricks','protontricks','protonupqt','lutris','heroic'], 3, 'WINDOWS & COMPATIBILITY'))
 
-        for text_value, index in [
-            ('Featured', 0), ('All Apps', 1), ('Game Engines', 2),
-            ('3D & Art', 3), ('Streaming', 4), ('Windows Tools', 5)
-        ]:
+        for text_value, index in [('Featured',0),('All Apps',1),('Game Engines',2),('3D & Art',3),('Streaming',4),('Windows Tools',5)]:
             category_button(text_value, index)
         category_buttons[0].setChecked(True)
         nl.addStretch()
@@ -414,18 +406,21 @@ replacement = r'''    def app_store(self):
         v.addWidget(footer)
         return s
 '''
+    text = text[:start] + replacement + text[end:]
 
-text = text[:start] + replacement + text[end:]
+# Make Creator -> MechScope a same-session handoff. Replace the whole method
+# structurally so formatting changes cannot drop the user back to Plasma.
+method = '    def mechscope(self):\n'
+ms = text.find(method)
+if ms >= 0 and 'MECHOS_CREATOR_RETURN_TO_MECHSCOPE_V2' not in text[ms:ms+1400]:
+    next_def = text.find('\n    def ', ms + len(method))
+    if next_def < 0:
+        raise SystemExit('[MechOS Reference Stores v3] could not bound Creator mechscope() method')
+    replacement = '''    def mechscope(self):\n        # MECHOS_CREATOR_RETURN_TO_MECHSCOPE_V2\n        env_names = ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_SESSION_TYPE"]\n        subprocess.run(["systemctl", "--user", "import-environment", *env_names], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n        if shutil.which("dbus-update-activation-environment"):\n            subprocess.run(["dbus-update-activation-environment", "--systemd", *env_names], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n        result = subprocess.run(["systemctl", "--user", "start", "--no-block", "mechos-gaming-layer.service"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n        if result.returncode != 0:\n            QMessageBox.warning(self, "MechOS Creator Mode", "MechScope could not be started. Creator Mode will stay open instead of sending you to Desktop Mode.")\n            return\n        QTimer.singleShot(350, QApplication.quit)\n'''
+    text = text[:ms] + replacement + text[next_def:]
 
-# Returning from Creator Mode must stay in the same authenticated graphical
-# session. Do not log out to SDDM/Plasma; start the Gaming layer first and only
-# close Creator when systemd accepted that handoff.
-old = '''    def mechscope(self):\n        spawn(["/usr/local/bin/mechos-return-to-mechscope"]); QApplication.quit()\n'''
-new = '''    def mechscope(self):\n        # MECHOS_CREATOR_RETURN_TO_MECHSCOPE_V2\n        env_names = ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_SESSION_TYPE"]\n        subprocess.run(["systemctl", "--user", "import-environment", *env_names], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n        if shutil.which("dbus-update-activation-environment"):\n            subprocess.run(["dbus-update-activation-environment", "--systemd", *env_names], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n        result = subprocess.run(["systemctl", "--user", "start", "--no-block", "mechos-gaming-layer.service"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n        if result.returncode != 0:\n            QMessageBox.warning(self, "MechOS Creator Mode", "MechScope could not be started. Creator Mode will stay open instead of sending you to Desktop Mode.")\n            return\n        QTimer.singleShot(350, QApplication.quit)\n'''
-if old in text:
-    text = text.replace(old, new, 1)
-elif 'MECHOS_CREATOR_RETURN_TO_MECHSCOPE_V2' not in text:
-    raise SystemExit('[MechOS Reference Stores v3] could not locate Creator return-to-MechScope method')
+if 'MECHOS_CREATOR_RETURN_TO_MECHSCOPE_V2' not in text:
+    raise SystemExit('[MechOS Reference Stores v3] Creator return-to-MechScope marker is missing')
 
 path.write_text(text, encoding='utf-8')
 PY
@@ -464,33 +459,25 @@ end += len('\n    ;;')
 
 replacement = r'''  creator)
     # MECHOS_CREATOR_READINESS_HANDOFF_V2
-    # Import the active compositor/session environment before launching Creator.
     systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS XDG_SESSION_TYPE >/dev/null 2>&1 || true
     if command -v dbus-update-activation-environment >/dev/null 2>&1; then
       dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS XDG_SESSION_TYPE >/dev/null 2>&1 || true
     fi
-
-    if systemctl --user cat mechos-creator-mode.service >/dev/null 2>&1; then
-      systemctl --user reset-failed mechos-creator-mode.service >/dev/null 2>&1 || true
-      systemctl --user start --no-block mechos-creator-mode.service
-      ready=0
-      for _ in 1 2 3 4 5 6 7 8; do
-        if systemctl --user is-active --quiet mechos-creator-mode.service; then
-          ready=1
-          break
-        fi
-        sleep 0.15
-      done
-      if [ "$ready" -ne 1 ]; then
-        echo "Creator Mode failed to start; keeping MechScope active." >&2
-        exit 1
-      fi
-    else
+    if ! systemctl --user cat mechos-creator-mode.service >/dev/null 2>&1; then
       echo "Creator Mode service is missing; keeping MechScope active." >&2
       exit 1
     fi
-
-    # Only release Gaming Mode after Creator is confirmed active.
+    systemctl --user reset-failed mechos-creator-mode.service >/dev/null 2>&1 || true
+    systemctl --user start --no-block mechos-creator-mode.service
+    ready=0
+    for _ in 1 2 3 4 5 6 7 8; do
+      if systemctl --user is-active --quiet mechos-creator-mode.service; then ready=1; break; fi
+      sleep 0.15
+    done
+    if [ "$ready" -ne 1 ]; then
+      echo "Creator Mode failed to start; keeping MechScope active." >&2
+      exit 1
+    fi
     stop_layer
     ;;'''
 
@@ -509,14 +496,9 @@ patch_tree() {
   local mechscope creator
   mechscope="$(resolve_python_target "$tree" mechscope)"
   creator="$(resolve_python_target "$tree" mechos-creator-mode)"
-
   [ -f "$mechscope" ] || fail "MechScope target is missing in $tree"
   patch_mechscope_store "$mechscope"
-
-  # Creator is intentionally post-install-only. Patch it whenever present.
-  if [ -f "$creator" ]; then
-    patch_creator_store "$creator"
-  fi
+  if [ -f "$creator" ]; then patch_creator_store "$creator"; fi
   patch_creator_handoff "$tree"
 }
 
