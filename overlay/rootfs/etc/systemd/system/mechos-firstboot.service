@@ -1,16 +1,16 @@
 [Unit]
-Description=MechOS first-boot gaming and GPU setup
-After=network-online.target
-Wants=network-online.target
-Before=sddm.service
+Description=MechOS background first-boot gaming and GPU setup
+After=NetworkManager.service
+Wants=NetworkManager.service
 ConditionPathExists=!/run/archiso/bootmnt
+ConditionPathExists=/var/lib/mechos/oobe-complete
 ConditionPathExists=!/var/lib/mechos/firstboot.done
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/mechos-firstboot
-RemainAfterExit=yes
-TimeoutStartSec=15min
-
-[Install]
-WantedBy=multi-user.target
+TimeoutStartSec=5min
+Nice=15
+IOSchedulingClass=idle
+CPUWeight=10
+IOWeight=10
