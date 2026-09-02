@@ -62,6 +62,9 @@ bash /workspace/scripts/mechos-optimization-report-ui-integration.sh final
 bash /workspace/scripts/mechos-native-installer-integration.sh final
 # Apply small runtime hardening after the native helper has been generated.
 bash /workspace/scripts/mechos-native-installer-runtime-hotfix.sh final
+# Fix multi-word VM/physical disk model detection and make whole-disk routing
+# native-only even if an older selected-target launch hook survives.
+bash /workspace/scripts/mechos-live-disk-routing-hotfix.sh final
 
 """
 
@@ -121,6 +124,7 @@ def main() -> None:
         and "mechos-live-update-keep-home-integration.sh final" in text
         and "mechos-native-installer-integration.sh final" in text
         and "mechos-native-installer-runtime-hotfix.sh final" in text
+        and "mechos-live-disk-routing-hotfix.sh final" in text
     ):
         print(f"[MechOS current patcher] current integration already applied to {target}")
         return
@@ -163,6 +167,8 @@ def main() -> None:
         fail("native MechOS installer integration was not wired")
     if "mechos-native-installer-runtime-hotfix.sh final" not in text:
         fail("native installer runtime hotfix was not wired")
+    if "mechos-live-disk-routing-hotfix.sh final" not in text:
+        fail("Live disk routing hotfix was not wired")
 
     target.write_text(text, encoding="utf-8")
     print(f"[MechOS current patcher] cumulative integration applied to {target}")
