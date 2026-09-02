@@ -32,7 +32,7 @@ jobs:
       - name: Validate MechOS source
         run: |
           ./scripts/validate-project.sh
-          ./scripts/validate-gamescope-universal.sh
+          bash scripts/validate-gamescope-universal.sh
 
       - name: Apply cumulative MechOS integration
         run: |
