@@ -8,17 +8,22 @@ from pathlib import Path
 
 MARKER_EARLY = "# MECHOS_CURRENT_INTEGRATION_EARLY"
 MARKER_LATE = "# MECHOS_CURRENT_INTEGRATION_LATE"
+
 CALL_EARLY = f"""{MARKER_EARLY}
 # Apply the cumulative MechOS runtime/installer integration.
 bash /workspace/scripts/mechos-current-integration.sh early
 
 """
+
 CALL_LATE = f"""{MARKER_LATE}
 # Re-apply after all legacy builder blocks so current fixes win.
 bash /workspace/scripts/mechos-current-integration.sh final
 # Add the guided dual-boot/Install Alongside flow after the graphical installer
 # and post-install payload have both been generated.
 bash /workspace/scripts/mechos-alongside-integration.sh final
+# For whole-disk Clean Install, make the disk chosen in the Live graphical
+# selector the only disk that gets erased, partitioned, formatted and installed.
+bash /workspace/scripts/mechos-selected-drive-clean-install-integration.sh final
 # Configure the installed-system MechOS graphical GRUB boot menu before OOBE.
 bash /workspace/scripts/mechos-graphical-bootloader-integration.sh final
 # Add the post-install owner setup flow before any MechScope first-run UI.
@@ -54,21 +59,37 @@ def fail(message: str) -> None:
     raise SystemExit(f"[MechOS current patcher] ERROR: {message}")
 
 
-def strip_legacy_patch_calls(text: str) -> str:
-    # Remove only the small injected call blocks from old/current patchers.
-    # NOTE: this function runs with DOTALL so any wildcard intended to stay on
-    # one comment line must use [^\n]* rather than .*; otherwise it can consume
-    # the final mkarchiso command and make the idempotency validator fail.
-    patterns = [
-        r"\n# MECHOS_V0_2_1_REPAIR_EARLY\n.*?bash /workspace/scripts/mechos-v0\.2\.1-runtime-repair\.sh early\n\n",
-        r"\n# MECHOS_V0_2_1_REPAIR_LATE\n.*?bash /workspace/scripts/mechos-v0\.2\.1-runtime-repair\.sh final\n\n",
-        r"\n# MECHOS_V0_2_2_REPAIR_EARLY\n.*?bash /workspace/scripts/mechos-v0\.2\.2-runtime-repair\.sh early\n\n",
-        r"\n# MECHOS_V0_2_2_REPAIR_LATE\n.*?bash /workspace/scripts/mechos-v0\.2\.2-runtime-repair\.sh final\n\n",
-        r"\n# MECHOS_CURRENT_INTEGRATION_EARLY\n.*?bash /workspace/scripts/mechos-current-integration\.sh early\n\n",
-        r"\n# MECHOS_CURRENT_INTEGRATION_LATE\n.*?bash /workspace/scripts/mechos-current-integration\.sh final\n(?:# Add the guided dual-boot/Install Alongside flow[^\n]*\n# and post-install payload have both been generated\.\n)?(?:bash /workspace/scripts/mechos-alongside-integration\.sh final\n)?(?:# Configure the installed-system MechOS graphical GRUB boot menu before OOBE\.\n)?(?:bash /workspace/scripts/mechos-graphical-bootloader-integration\.sh final\n)?(?:# Add the post-install owner setup flow[^\n]*\n)?(?:bash /workspace/scripts/mechos-oobe-integration\.sh final\n)?(?:# Turn Creator presets into saved workflow profiles[^\n]*\n# the installed apps needed for the selected Creator workflow\.\n)?(?:bash /workspace/scripts/mechos-creator-profile-integration\.sh final\n)?(?:# Add first-run navigation tutorials[^\n]*\n# installed-system payload have been generated\.\n)?(?:bash /workspace/scripts/mechos-tutorial-integration\.sh final\n)?(?:# Hard-gate tutorial auto-launch[^\n]*\n)?(?:# the Live ISO and incomplete installs from ever triggering first-run guides\.\n)?(?:bash /workspace/scripts/mechos-tutorial-postinstall-guard\.sh final\n)?(?:# Keep heavyweight Creator applications out of the core ISO[^\n]*\n# install them on demand when the user selects those workflows\.\n)?(?:bash /workspace/scripts/mechos-footprint-integration\.sh final\n)?(?:# Apply boot-to-MechScope performance fixes[^\n]*\n# exists so FastBoot can patch both the Live image and installed-system payload\.\n)?(?:bash /workspace/scripts/mechos-fastboot-integration\.sh final\n)?(?:# Normalize MechScope's stylesheet hook[^\n]*\n# shared visual-theme pass cannot miss a modified setStyleSheet expression\.\n)?(?:bash /workspace/scripts/mechos-ui-theme-compat-hotfix\.sh final\n)?(?:# Apply the final lightweight MechOS blue/purple visual system[^\n]*\n# Live and installed PyQt interfaces, and install the real System Tools Hub\.\n)?(?:bash /workspace/scripts/mechos-ui-polish-integration\.sh final\n)?(?:# Make the Optimization Report visible and usable from Performance Center and\n# System Tools after their final UI versions have been generated\.\n)?(?:bash /workspace/scripts/mechos-optimization-report-ui-integration\.sh final\n)?\n",
-    ]
-    for pattern in patterns:
-        text = re.sub(pattern, "\n", text, flags=re.S)
+def strip_injected_calls(text: str) -> str:
+    """Remove call blocks previously inserted by current/legacy patchers."""
+    for marker, command in (
+        ("# MECHOS_V0_2_1_REPAIR_EARLY", "bash /workspace/scripts/mechos-v0.2.1-runtime-repair.sh early"),
+        ("# MECHOS_V0_2_1_REPAIR_LATE", "bash /workspace/scripts/mechos-v0.2.1-runtime-repair.sh final"),
+        ("# MECHOS_V0_2_2_REPAIR_EARLY", "bash /workspace/scripts/mechos-v0.2.2-runtime-repair.sh early"),
+        ("# MECHOS_V0_2_2_REPAIR_LATE", "bash /workspace/scripts/mechos-v0.2.2-runtime-repair.sh final"),
+    ):
+        text = re.sub(
+            rf"\n{re.escape(marker)}\n.*?{re.escape(command)}\n\n",
+            "\n",
+            text,
+            flags=re.S,
+        )
+
+    text = re.sub(
+        rf"\n{re.escape(MARKER_EARLY)}\n.*?bash /workspace/scripts/mechos-current-integration\.sh early\n\n",
+        "\n",
+        text,
+        flags=re.S,
+    )
+
+    # The late block is always inserted immediately before the final mkarchiso
+    # command. Removing up to that command makes this patcher idempotent even as
+    # new late integration calls are added over time.
+    text = re.sub(
+        rf"\n{re.escape(MARKER_LATE)}\n.*?(?=^(?!\s*#).*\bmkarchiso\b.*$)",
+        "\n",
+        text,
+        flags=re.S | re.M,
+    )
     return text
 
 
@@ -85,27 +106,32 @@ def main() -> None:
     if not backup.exists():
         shutil.copy2(target, backup)
 
-    text = strip_legacy_patch_calls(text)
+    text = strip_injected_calls(text)
 
     installer_patterns = [
         r'(?m)^cat > /workspace/archlive/airootfs/usr/local/bin/mechos-install << ["\']?EOF["\']?\s*$',
         r'(?m)^cat > .*?/usr/local/bin/mechos-install << ["\']?EOF["\']?\s*$',
     ]
-    match = None
+    installer_match = None
     for pattern in installer_patterns:
-        match = re.search(pattern, text)
-        if match:
+        installer_match = re.search(pattern, text)
+        if installer_match:
             break
-    if not match:
+    if not installer_match:
         fail("could not locate mechos-install heredoc; refusing a blind patch")
 
-    text = text[:match.start()] + CALL_EARLY + text[match.start():]
+    text = text[:installer_match.start()] + CALL_EARLY + text[installer_match.start():]
 
     mk_matches = list(re.finditer(r'(?m)^(?!\s*#).*\bmkarchiso\b.*$', text))
     if not mk_matches:
         fail("could not locate mkarchiso; refusing a blind patch")
-    match = mk_matches[-1]
-    text = text[:match.start()] + CALL_LATE + text[match.start():]
+    mk_match = mk_matches[-1]
+    text = text[:mk_match.start()] + CALL_LATE + text[mk_match.start():]
+
+    if text.count(MARKER_EARLY) != 1 or text.count(MARKER_LATE) != 1:
+        fail("integration markers are not unique after patching")
+    if "mechos-selected-drive-clean-install-integration.sh final" not in text:
+        fail("selected-drive clean-install integration was not wired")
 
     target.write_text(text, encoding="utf-8")
     print(f"[MechOS current patcher] cumulative integration applied to {target}")
