@@ -33,6 +33,10 @@ if grep -Eq '^[[:space:]]*archinstall[[:space:]]+--silent([[:space:]]|$)' "$NATI
 fi
 
 grep -Fq 'SETUP_GROUPS=' "$HOTFIX" || fail "reserved GROUPS-variable hotfix is missing"
+grep -Fq 'MIN_BYTES=$((20 * 1024 * 1024 * 1024))' "$HOTFIX" || fail "VM/test disk minimum hotfix is missing"
+grep -Fq 'MECHOS_NATIVE_ERROR_UI_V2' "$HOTFIX" || fail "native detailed-error UI hotfix is missing"
+grep -Fq "self.last_error=line.split('=',1)[1].strip()" "$HOTFIX" || fail "helper error preservation is missing"
+grep -Fq '64 GiB or more is recommended' "$HOTFIX" || fail "normal gaming disk-size recommendation is missing"
 grep -Fq 'mechos-native-installer-integration.sh final' "$PATCHER" || fail "native integration is not wired into the ISO builder"
 grep -Fq 'mechos-native-installer-runtime-hotfix.sh final' "$PATCHER" || fail "native runtime hotfix is not wired into the ISO builder"
 
