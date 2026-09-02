@@ -21,42 +21,83 @@ patch_rgb_helper() {
 
   python3 - "$helper" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-marker = "# MECHOS_REDRAGON_K580_RGB_COMPAT_V1"
-if marker in text:
-    raise SystemExit(0)
+text = path.read_text(encoding='utf-8')
+marker = '# MECHOS_REDRAGON_K580_RGB_COMPAT_V2'
 
-old_hints = '("keyboard", "keychron", "kbd", "huntsman", "blackwidow", "k100", "k95", "k70", "g915", "g815")'
-new_hints = '("keyboard", "keychron", "kbd", "huntsman", "blackwidow", "k100", "k95", "k70", "g915", "g815", "redragon", "red dragon", "vata", "k580", "evision", "sonix", "microdia")'
-if old_hints not in text:
-    raise SystemExit(f"RGB keyboard hint list not found in {path}")
-text = text.replace(old_hints, new_hints, 1)
+# Current MechOS already contains a Redragon hint in some builds. Extend the
+# existing tuple structurally instead of depending on quote style or an exact
+# historical tuple.
+hint_match = re.search(r'(?m)^(?P<indent>\s*)hints\s*=\s*\((?P<body>[^)]*)\)', text)
+if not hint_match:
+    raise SystemExit(f'RGB keyboard hint tuple not found in {path}')
 
-old_advanced = '''def advanced():\n    if not shutil.which("openrgb"):\n        return 2\n    subprocess.Popen(["openrgb"], start_new_session=True)\n    return 0\n\n\ndef status():\n'''
-new_advanced = '''def diagnostics():\n    tool = "/usr/local/bin/mechos-rgb-diagnostics"\n    if not Path(tool).is_file():\n        print("MechOS RGB diagnostics tool is missing.", file=sys.stderr)\n        return 2\n    subprocess.Popen(["konsole", "-e", "bash", "-lc", f"{tool}; echo; read -rp 'Press Enter to close...'"], start_new_session=True)\n    return 0\n\n\ndef advanced():\n    if not shutil.which("openrgb"):\n        return 2\n    subprocess.Popen(["openrgb"], start_new_session=True)\n    return 0\n\n\ndef status():\n'''
-if old_advanced not in text:
-    raise SystemExit(f"RGB advanced/status integration point not found in {path}")
-text = text.replace(old_advanced, new_advanced, 1)
+existing = re.findall(r"['\"]([^'\"]+)['\"]", hint_match.group('body'))
+required = [
+    'keyboard', 'keychron', 'kbd', 'huntsman', 'blackwidow',
+    'k100', 'k95', 'k70', 'g915', 'g815',
+    'redragon', 'red dragon', 'vata', 'k580', 'evision', 'sonix', 'microdia',
+]
+items = []
+for item in existing + required:
+    if item not in items:
+        items.append(item)
+replacement = hint_match.group('indent') + 'hints = (' + ', '.join(repr(x) for x in items) + ')'
+text = text[:hint_match.start()] + replacement + text[hint_match.end():]
 
-old_main = '''    if command == "advanced":\n        return advanced()\n    if command == "status":\n        return status()\n    print("Usage: mechos-rgb-keyboard {status|picker|advanced|restore|set RRGGBB}", file=sys.stderr)\n'''
-new_main = '''    if command == "advanced":\n        return advanced()\n    if command == "diagnostics":\n        return diagnostics()\n    if command == "status":\n        return status()\n    print("Usage: mechos-rgb-keyboard {status|picker|advanced|diagnostics|restore|set RRGGBB}", file=sys.stderr)\n'''
-if old_main not in text:
-    raise SystemExit(f"RGB command dispatcher not found in {path}")
-text = text.replace(old_main, new_main, 1)
+# Add diagnostics without depending on whether the helper uses single or
+# double quotes.
+if 'def diagnostics():' not in text:
+    advanced = re.search(r'(?m)^def advanced\(\):\s*$', text)
+    if not advanced:
+        raise SystemExit(f'RGB advanced() integration point not found in {path}')
+    diagnostics = '''def diagnostics():
+    tool = '/usr/local/bin/mechos-rgb-diagnostics'
+    if not Path(tool).is_file():
+        print('MechOS RGB diagnostics tool is missing.', file=sys.stderr)
+        return 2
+    subprocess.Popen([
+        'konsole', '-e', 'bash', '-lc',
+        f"{tool}; echo; read -rp 'Press Enter to close...'",
+    ], start_new_session=True)
+    return 0
 
-# Keep the interpreter first so the helper remains directly executable.
+
+'''
+    text = text[:advanced.start()] + diagnostics + text[advanced.start():]
+
+if not re.search(r"command\s*==\s*['\"]diagnostics['\"]", text):
+    status_cmd = re.search(r"(?m)^(?P<indent>\s*)if command == ['\"]status['\"]:\s*$", text)
+    if not status_cmd:
+        raise SystemExit(f'RGB command dispatcher/status branch not found in {path}')
+    indent = status_cmd.group('indent')
+    dispatch = indent + "if command == 'diagnostics':\n" + indent + "    return diagnostics()\n"
+    text = text[:status_cmd.start()] + dispatch + text[status_cmd.start():]
+
+text = text.replace(
+    '{status|picker|advanced|restore|set RRGGBB}',
+    '{status|picker|advanced|diagnostics|restore|set RRGGBB}',
+)
+
+# Keep exactly one current compatibility marker directly after the shebang.
+text = text.replace('# MECHOS_REDRAGON_K580_RGB_COMPAT_V1\n', '')
+text = text.replace(marker + '\n', '')
 lines = text.splitlines(True)
-insert_at = 1 if lines and lines[0].startswith("#!") else 0
-lines.insert(insert_at, marker + "\n")
-path.write_text("".join(lines), encoding="utf-8")
+insert_at = 1 if lines and lines[0].startswith('#!') else 0
+lines.insert(insert_at, marker + '\n')
+path.write_text(''.join(lines), encoding='utf-8')
 PY
 
-  python3 -m py_compile "$helper" || fail "RGB helper syntax failed after K580 compatibility patch"
-  grep -Fq '"k580"' "$helper" || fail "K580 detection hint was not added"
-  grep -Fq '"evision"' "$helper" || fail "EVision detection hint was not added"
+  PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$helper" \
+    || fail "RGB helper syntax failed after K580 compatibility patch"
+  grep -Eq "['\"]k580['\"]" "$helper" || fail "K580 detection hint was not added"
+  grep -Eq "['\"]evision['\"]" "$helper" || fail "EVision detection hint was not added"
+  grep -Fq "def diagnostics():" "$helper" || fail "RGB diagnostics dispatcher was not added"
+  grep -Eq "command[[:space:]]*==[[:space:]]*['\"]diagnostics['\"]" "$helper" \
+    || fail "RGB diagnostics command was not added"
 }
 
 install_diagnostics() {
@@ -122,7 +163,7 @@ mkdir -p "$STATE_DIR"
   echo "== MechOS notes =="
   echo "K580 hardware revisions are not guaranteed to use the same controller."
   echo "MechOS does not flash keyboard firmware automatically."
-  echo "If OpenRGB reports an EVision Keyboard, MechOS now treats EVision/Redragon/VATA/K580 names as keyboard devices."
+  echo "If OpenRGB reports an EVision Keyboard, MechOS treats EVision/Redragon/VATA/K580 names as keyboard devices."
   echo "If no keyboard appears above, the USB VID:PID from this report is needed before adding a model-specific detector."
 } | tee "$REPORT"
 
@@ -154,20 +195,34 @@ from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-marker = "# MECHOS_REDRAGON_K580_QUICK_ACTIONS_V1"
-if marker in text:
+text = path.read_text(encoding='utf-8')
+marker = '# MECHOS_REDRAGON_K580_QUICK_ACTIONS_V2'
+if marker in text or 'RGB Diagnostics' in text:
     raise SystemExit(0)
 
-needle = '        lir.addWidget(self.button("Advanced RGB", lambda:spawn(["/usr/local/bin/mechos-rgb-keyboard","advanced"])),1,1)\n'
-insert = needle + '        # MECHOS_REDRAGON_K580_QUICK_ACTIONS_V1\n        lir.addWidget(self.button("RGB Diagnostics", lambda:spawn(["/usr/local/bin/mechos-rgb-keyboard","diagnostics"])),2,0,1,2)\n'
-if needle not in text:
-    raise SystemExit(0)
-text = text.replace(needle, insert, 1)
-path.write_text(text, encoding="utf-8")
+lines = text.splitlines(True)
+inserted = False
+for index, line in enumerate(lines):
+    if 'Advanced RGB' not in line or 'mechos-rgb-keyboard' not in line:
+        continue
+    indent = line[:len(line) - len(line.lstrip())]
+    block = (
+        indent + marker + '\n' +
+        indent + 'lir.addWidget(self.button("RGB Diagnostics", lambda:spawn(["/usr/local/bin/mechos-rgb-keyboard","diagnostics"])),2,0,1,2)\n'
+    )
+    lines.insert(index + 1, block)
+    inserted = True
+    break
+
+# Quick Actions may be post-install-only or may have moved this control in a
+# future reference layout. That must not block the ISO as long as the helper
+# and diagnostics app are valid.
+if inserted:
+    path.write_text(''.join(lines), encoding='utf-8')
 PY
 
-  python3 -m py_compile "$target" || fail "Quick Actions syntax failed after RGB diagnostics patch"
+  PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$target" \
+    || fail "Quick Actions syntax failed after RGB diagnostics patch"
 }
 
 patch_tree() {
@@ -180,7 +235,9 @@ patch_tree() {
 patch_tree "$ROOT"
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+cleanup() { rm -rf "$TMP"; }
+trap cleanup EXIT
+
 tar --zstd -xpf "$ARCHIVE" -C "$TMP"
 patch_tree "$TMP"
 
@@ -191,7 +248,9 @@ rm -rf "$TMP"
 trap - EXIT
 
 [ -x "$ROOT/usr/local/bin/mechos-rgb-diagnostics" ] || fail "Live RGB diagnostics helper missing"
-grep -Fq 'MECHOS_REDRAGON_K580_RGB_COMPAT_V1' "$ROOT/usr/local/bin/mechos-rgb-keyboard" \
+grep -Fq 'MECHOS_REDRAGON_K580_RGB_COMPAT_V2' "$ROOT/usr/local/bin/mechos-rgb-keyboard" \
   || fail "Live K580 compatibility marker missing"
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$ROOT/usr/local/bin/mechos-rgb-keyboard" \
+  || fail "Final Live RGB helper syntax validation failed"
 
 log "Redragon VATA K580RGB detection hints and RGB diagnostics added without firmware flashing"
