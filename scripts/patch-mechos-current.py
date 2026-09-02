@@ -57,6 +57,9 @@ bash /workspace/scripts/mechos-ui-polish-integration.sh final
 # Make the Optimization Report visible and usable from Performance Center and
 # System Tools after their final UI versions have been generated.
 bash /workspace/scripts/mechos-optimization-report-ui-integration.sh final
+# Final installer authority: replace the remaining Clean Install handoff with
+# MechOS-owned partitioning, package provisioning, payload deployment and boot.
+bash /workspace/scripts/mechos-native-installer-integration.sh final
 
 """
 
@@ -114,6 +117,7 @@ def main() -> None:
         and "mechos-selected-drive-clean-install-integration.sh final" in text
         and "mechos-installer-path-import-hotfix.sh final" in text
         and "mechos-live-update-keep-home-integration.sh final" in text
+        and "mechos-native-installer-integration.sh final" in text
     ):
         print(f"[MechOS current patcher] current integration already applied to {target}")
         return
@@ -152,6 +156,8 @@ def main() -> None:
         fail("Live installer Path import hotfix was not wired")
     if "mechos-live-update-keep-home-integration.sh final" not in text:
         fail("Live Keep Home update integration was not wired")
+    if "mechos-native-installer-integration.sh final" not in text:
+        fail("native MechOS installer integration was not wired")
 
     target.write_text(text, encoding="utf-8")
     print(f"[MechOS current patcher] cumulative integration applied to {target}")
