@@ -20,4 +20,6 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run static validation
-        run: ./scripts/validate-project.sh
+        run: |
+          ./scripts/validate-project.sh
+          bash scripts/validate-gamescope-universal.sh
