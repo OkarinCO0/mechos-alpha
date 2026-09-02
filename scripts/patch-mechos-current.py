@@ -51,8 +51,7 @@ bash /workspace/scripts/mechos-fastboot-integration.sh final
 # Normalize MechScope's stylesheet hook after all late integrations so the
 # shared visual-theme pass cannot miss a modified setStyleSheet expression.
 bash /workspace/scripts/mechos-ui-theme-compat-hotfix.sh final
-# Apply the final lightweight MechOS blue/purple visual system to the finished
-# Live and installed PyQt interfaces, and install the real System Tools Hub.
+# Apply the lightweight shared MechOS theme and System Tools Hub.
 bash /workspace/scripts/mechos-ui-polish-integration.sh final
 # Make the Optimization Report visible and usable from Performance Center and
 # System Tools after their final UI versions have been generated.
@@ -69,6 +68,9 @@ bash /workspace/scripts/mechos-live-disk-routing-hotfix.sh final
 # Store/Downloads stay full-screen and the VM Plasma fallback hides desktop
 # chrome while MechScope is active.
 bash /workspace/scripts/mechos-mechscope-shell-integration.sh final
+# FINAL VISUAL AUTHORITY: make every MechOS-owned PyQt surface follow the
+# approved graphical reference with one shared neon console/workstation system.
+bash /workspace/scripts/mechos-reference-ui-integration.sh final
 
 """
 
@@ -130,6 +132,7 @@ def main() -> None:
         and "mechos-native-installer-runtime-hotfix.sh final" in text
         and "mechos-live-disk-routing-hotfix.sh final" in text
         and "mechos-mechscope-shell-integration.sh final" in text
+        and "mechos-reference-ui-integration.sh final" in text
     ):
         print(f"[MechOS current patcher] current integration already applied to {target}")
         return
@@ -176,6 +179,8 @@ def main() -> None:
         fail("Live disk routing hotfix was not wired")
     if "mechos-mechscope-shell-integration.sh final" not in text:
         fail("MechScope shell integration was not wired")
+    if "mechos-reference-ui-integration.sh final" not in text:
+        fail("master graphical reference UI was not wired")
 
     target.write_text(text, encoding="utf-8")
     print(f"[MechOS current patcher] cumulative integration applied to {target}")
