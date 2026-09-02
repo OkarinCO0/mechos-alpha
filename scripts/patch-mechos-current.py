@@ -81,9 +81,6 @@ def strip_injected_calls(text: str) -> str:
         flags=re.S,
     )
 
-    # The late block is always inserted immediately before the final mkarchiso
-    # command. Removing up to that command makes this patcher idempotent even as
-    # new late integration calls are added over time.
     text = re.sub(
         rf"\n{re.escape(MARKER_LATE)}\n.*?(?=^(?!\s*#).*\bmkarchiso\b.*$)",
         "\n",
@@ -101,6 +98,17 @@ def main() -> None:
     text = target.read_text(encoding="utf-8")
     if not text.startswith("#!"):
         fail("target does not look like a shell builder")
+
+    # Once the current block already contains this feature, a second patch pass
+    # must be a byte-for-byte no-op. The project validator intentionally runs
+    # this patcher twice to enforce that property.
+    if (
+        text.count(MARKER_EARLY) == 1
+        and text.count(MARKER_LATE) == 1
+        and "mechos-selected-drive-clean-install-integration.sh final" in text
+    ):
+        print(f"[MechOS current patcher] current integration already applied to {target}")
+        return
 
     backup = target.with_suffix(target.suffix + ".pre-current-integration.bak")
     if not backup.exists():
