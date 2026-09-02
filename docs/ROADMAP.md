@@ -68,6 +68,11 @@
 ### MechOS Bridge for Companion app
 
 - add a lightweight **MechOS Bridge** service to installed MechOS systems in 0.3.1 so the operating system is ready for the Android/iOS MechOS Companion app planned for 0.4
+- make the bridge **post-install only**: stage its runtime/service files only in the installed-system payload and install/enable them after MechOS has been installed; do not expose an active bridge daemon, listener or pairing endpoint from the disposable Live ISO
+- run one persistent bridge service across **all installed MechOS modes — MechScope, Desktop Mode and Creator Mode** — so switching modes does not disconnect the paired Companion app or require separate per-mode bridge processes
+- report the currently active MechOS mode through the bridge and automatically update Companion-visible state when the user moves between MechScope, Desktop Mode and Creator Mode
+- keep the same paired-device identity, permissions, notification channel and approved remote actions available across all three modes, subject to the user's per-device permission settings
+- integrate bridge controls directly into **MechScope Settings > Companion & Bridge**, while also providing an installed-system Desktop/Creator-accessible settings launcher so pairing, revocation and permissions can be managed without first switching back to MechScope
 - provide a versioned local API between the Companion app and MechOS instead of allowing the mobile app to execute arbitrary shell commands on the PC
 - make local-network pairing the default using a QR code or short one-time pairing code, with encrypted authenticated sessions and a clear paired-device/revoke screen
 - keep the bridge local-network-only by default for 0.3.1; do not expose the service directly to the public internet or add cloud remote access until a separately reviewed secure design exists
@@ -79,9 +84,8 @@
 - store pairing keys/tokens using protected per-user/system storage, never place them in normal logs, diagnostic bundles or plaintext MechOS configuration files
 - run the normal bridge service with least privilege and isolate any narrowly required privileged operation behind a separate reviewed helper rather than running the entire bridge as root
 - add connection rate limits, request validation, device revocation and session expiration so a paired phone cannot silently retain unlimited access forever
-- add **MechScope Settings > Companion & Bridge** with bridge enable/disable, pairing, connected-device list, permission management, connection status, local address and diagnostic/test controls
-- keep the bridge disabled on the disposable Live ISO and make installed-system availability explicit so pairing cannot accidentally target a temporary Live session
-- define stable bridge endpoints in 0.3.1 for MechScope/library status, MechOS downloads/OTA, notifications and approved app/game launches so the 0.4 Companion app can build against a known interface
+- require an installed-system marker before the bridge service can start and keep the unit disabled/masked or absent in Live runtime so accidental Live-session activation is not a supported path
+- define stable bridge endpoints in 0.3.1 for mode state/switching, MechScope/library status, MechOS downloads/OTA, notifications and approved app/game launches so the 0.4 Companion app can build against a known interface
 - reserve extension points for MechClip, RadarAI, VRChat creator helpers and other future Companion features without requiring those integrations to be fully implemented in the initial 0.3.1 bridge
 
 ### Post-install network connection setup
