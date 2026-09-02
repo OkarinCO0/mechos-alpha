@@ -27,6 +27,9 @@ bash /workspace/scripts/mechos-selected-drive-clean-install-integration.sh final
 # The location UI reads its JSON target with pathlib.Path. Ensure the final
 # generated installer imports Path so target selection cannot fail at runtime.
 bash /workspace/scripts/mechos-installer-path-import-hotfix.sh final
+# Turn the Live Reinstall/Keep Home path into a real ISO refresh that preserves
+# /home, user identity and machine-specific settings without formatting disks.
+bash /workspace/scripts/mechos-live-update-keep-home-integration.sh final
 # Configure the installed-system MechOS graphical GRUB boot menu before OOBE.
 bash /workspace/scripts/mechos-graphical-bootloader-integration.sh final
 # Add the post-install owner setup flow before any MechScope first-run UI.
@@ -110,6 +113,7 @@ def main() -> None:
         and text.count(MARKER_LATE) == 1
         and "mechos-selected-drive-clean-install-integration.sh final" in text
         and "mechos-installer-path-import-hotfix.sh final" in text
+        and "mechos-live-update-keep-home-integration.sh final" in text
     ):
         print(f"[MechOS current patcher] current integration already applied to {target}")
         return
@@ -146,6 +150,8 @@ def main() -> None:
         fail("selected-drive clean-install integration was not wired")
     if "mechos-installer-path-import-hotfix.sh final" not in text:
         fail("Live installer Path import hotfix was not wired")
+    if "mechos-live-update-keep-home-integration.sh final" not in text:
+        fail("Live Keep Home update integration was not wired")
 
     target.write_text(text, encoding="utf-8")
     print(f"[MechOS current patcher] cumulative integration applied to {target}")
