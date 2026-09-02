@@ -188,7 +188,7 @@
 - never claim to bypass or defeat anti-cheat; games whose vendor or anti-cheat intentionally blocks Linux/Proton must be marked unsupported until the vendor enables support
 - allow compatibility profiles and anti-cheat status data to be updated independently through reviewed MechOS hotfix/update packages as game support changes
 
-### USB4 and advanced controller support
+### USB4, HOTAS/joystick and advanced controller support
 
 - USB4 and Thunderbolt-class device support using the Linux kernel and userspace authorization stack supported by the detected hardware
 - MechScope/Settings USB4 device status for docks, storage, displays, networking and compatible external PCIe/eGPU devices
@@ -197,6 +197,14 @@
 - per-controller layout profiles with button remapping, stick inversion, deadzones, trigger ranges, sensitivity, controller order and profile save/restore
 - advanced controller support for USB and Bluetooth pairing, battery state, calibration, input testing and disconnect/reconnect handling
 - advanced mappings for supported gyro, touchpad, rear paddles/extra buttons, rumble/haptics and controller shortcut chords while falling back cleanly when hardware features are unavailable
+- add native HOTAS and joystick device detection for supported USB HID/evdev/SDL flight controls, including flight sticks, throttles, rudder pedals, yokes and button boxes without requiring them to emulate an Xbox controller
+- add a MechScope **HOTAS / Joystick Setup** page with live axis/button visualization, center/range calibration, axis inversion, deadzones, sensitivity and response-curve controls
+- support multi-device HOTAS sets so a stick, throttle, pedals and button box can be combined into one saved MechOS control profile while retaining each physical device's identity
+- support per-game HOTAS/joystick profiles with automatic profile selection at launch, manual overrides and import/export of readable local mappings without overwriting a game's own bindings
+- add axis/button conflict detection and a controller test screen that shows raw and processed values so drift, miscalibration and duplicate bindings can be diagnosed before launching a game
+- pass supported HOTAS/joystick devices through to native Linux and Proton/Wine games using the appropriate Linux input path, while preserving Steam Input when a title or user explicitly chooses Steam to manage the device
+- expose optional force-feedback/haptic capability only when the Linux driver, physical device and game support it; unsupported devices should continue working as normal input devices without fake force-feedback claims
+- include HOTAS/joystick reconnect handling and persistent profile matching so unplugging or rebooting does not require rebuilding mappings when the same recognized devices return
 - separate Desktop and MechScope controller profiles plus optional per-game layout handoff through Steam Input where Steam manages the title
 - controller-first navigation and an on-screen controller test/calibration page so every mapped input can be verified before launching a game
 
