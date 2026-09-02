@@ -30,6 +30,98 @@ sed -i \
   -e 's/Selected disk is smaller than the 32 GiB minimum\./Selected disk is smaller than the 20 GiB minimum. Use at least 64 GiB for a normal MechOS gaming install./' \
   "$HELPER"
 
+# Give BIOS GRUB more embedding room than the original 2 MiB partition. This is
+# still tiny relative to the disk but avoids marginal core-image/module layouts
+# on BIOS+GPT VMs and physical systems.
+sed -i \
+  -e 's/size=2MiB,type=21686148-6449-6E6F-744E-656564454649,name=MECHOS_BIOS/size=8MiB,type=21686148-6449-6E6F-744E-656564454649,name=MECHOS_BIOS/' \
+  "$HELPER"
+
+python3 - "$HELPER" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding='utf-8')
+marker = '# MECHOS_DUAL_FIRMWARE_BOOT_V2'
+if marker not in text:
+    start = text.find('progress 90 "Installing MechOS bootloader"')
+    end = text.find('\nprogress 96 "Finalizing MechOS installation"', start)
+    if start < 0 or end < 0:
+        raise SystemExit('[MechOS Native Installer Hotfix] could not locate bootloader section')
+
+    replacement = r'''progress 90 "Installing MechOS bootloader"
+# MECHOS_DUAL_FIRMWARE_BOOT_V2
+# The clean-install disk is deliberately bootable in BOTH Legacy BIOS and UEFI,
+# regardless of which firmware mode was used to boot the Live ISO.
+BIOS_GUID='21686148-6449-6e6f-744e-656564454649'
+BIOS_TYPE="$(lsblk -nro PARTTYPE "$BIOS_PART" 2>/dev/null | head -n1 | tr '[:upper:]' '[:lower:]')"
+[ "$BIOS_TYPE" = "$BIOS_GUID" ] \
+  || fail "Legacy BIOS boot partition is missing or has the wrong GPT type: $BIOS_PART"
+
+# Install BIOS GRUB into the disk MBR and embed core.img in the BIOS Boot
+# partition. Explicit modules guarantee GPT+Btrfs discovery on first boot.
+if ! arch-chroot "$MNT" grub-install \
+    --target=i386-pc \
+    --boot-directory=/boot \
+    --modules='biosdisk part_gpt btrfs normal configfile' \
+    --recheck "$DISK"; then
+  fail "Legacy BIOS GRUB installation failed on $DISK"
+fi
+
+[ -s "$MNT/boot/grub/i386-pc/core.img" ] \
+  || fail "Legacy BIOS GRUB core image was not generated."
+[ -s "$MNT/boot/grub/i386-pc/normal.mod" ] \
+  || fail "Legacy BIOS GRUB modules were not installed."
+
+# Always create a removable UEFI loader too. When booted in UEFI mode we first
+# try the normal NVRAM entry; otherwise (or if NVRAM is unavailable) we install
+# the firmware-independent EFI/BOOT/BOOTX64.EFI fallback.
+UEFI_OK=0
+if [ -d /sys/firmware/efi ]; then
+  if arch-chroot "$MNT" grub-install \
+      --target=x86_64-efi \
+      --efi-directory=/boot/efi \
+      --bootloader-id=MechOS \
+      --recheck; then
+    UEFI_OK=1
+  fi
+fi
+
+if [ "$UEFI_OK" -ne 1 ]; then
+  arch-chroot "$MNT" grub-install \
+    --target=x86_64-efi \
+    --efi-directory=/boot/efi \
+    --bootloader-id=MechOS \
+    --removable --no-nvram --recheck \
+    || fail "UEFI removable fallback installation failed."
+fi
+
+# Ensure the removable UEFI path exists even when the normal NVRAM install
+# succeeded, making the disk portable between firmware implementations.
+if [ ! -s "$MNT/boot/efi/EFI/BOOT/BOOTX64.EFI" ]; then
+  arch-chroot "$MNT" grub-install \
+    --target=x86_64-efi \
+    --efi-directory=/boot/efi \
+    --bootloader-id=MechOS \
+    --removable --no-nvram --recheck \
+    || fail "Could not create EFI/BOOT/BOOTX64.EFI fallback."
+fi
+
+mkdir -p "$MNT/etc/default/grub.d"
+printf 'GRUB_DISABLE_OS_PROBER=false\n' > "$MNT/etc/default/grub.d/90-mechos.cfg"
+arch-chroot "$MNT" grub-mkconfig -o /boot/grub/grub.cfg \
+  || fail "GRUB configuration generation failed."
+arch-chroot "$MNT" grub-script-check /boot/grub/grub.cfg \
+  || fail "Generated GRUB configuration did not validate."
+
+[ -s "$MNT/boot/grub/grub.cfg" ] || fail "GRUB configuration is missing."
+sync
+'''
+    text = text[:start] + replacement + text[end:]
+    path.write_text(text, encoding='utf-8')
+PY
+
 python3 - "$UI" <<'PY'
 from pathlib import Path
 import sys
@@ -81,6 +173,18 @@ if grep -Eq '^[[:space:]]*GROUPS=' "$HELPER"; then
 fi
 grep -Fq 'MIN_BYTES=$((20 * 1024 * 1024 * 1024))' "$HELPER" \
   || fail "20 GiB VM/test minimum is missing"
+grep -Fq 'size=8MiB,type=21686148-6449-6E6F-744E-656564454649,name=MECHOS_BIOS' "$HELPER" \
+  || fail "8 MiB Legacy BIOS embedding partition is missing"
+grep -Fq 'MECHOS_DUAL_FIRMWARE_BOOT_V2' "$HELPER" \
+  || fail "dual-firmware bootloader hardening is missing"
+grep -Fq "--target=i386-pc" "$HELPER" \
+  || fail "Legacy BIOS GRUB target is missing"
+grep -Fq 'boot/grub/i386-pc/core.img' "$HELPER" \
+  || fail "Legacy BIOS GRUB verification is missing"
+grep -Fq 'EFI/BOOT/BOOTX64.EFI' "$HELPER" \
+  || fail "removable UEFI fallback verification is missing"
+grep -Fq 'grub-script-check /boot/grub/grub.cfg' "$HELPER" \
+  || fail "GRUB config validation is missing"
 grep -Fq 'MECHOS_NATIVE_ERROR_UI_V2' "$UI" \
   || fail "native installer detailed error UI is missing"
 grep -Fq "self.last_error=line.split('=',1)[1].strip()" "$UI" \
@@ -92,4 +196,4 @@ grep -Fq "self.last_error=line.split('=',1)[1].strip()" "$UI" \
 [ -f "$PHASE2" ] || fail "Phase 2 optimization integration is missing"
 bash "$PHASE2" final
 
-log "native installer VM preflight, detailed error reporting, setup-user variables and Phase 2 optimization applied"
+log "native installer VM preflight, verified dual-firmware boot, detailed errors, setup-user variables and Phase 2 optimization applied"
