@@ -16,6 +16,8 @@ bash /workspace/scripts/mechos-gamescope-amd-compat-integration.sh final
 # The Desktop -> MechScope launcher is a normal user-session action. It must not
 # use loginctl, sudo, pkexec, or anything else that can request a password.
 bash /workspace/scripts/mechos-passwordless-return-integration.sh final
+# Installed systems authenticate after boot and resume, but never for mode switches.
+bash /workspace/scripts/mechos-postinstall-auth-policy-integration.sh final
 # Creator Mode is wrapped by the first-run tutorial. Teach the Discord
 # integration to patch mechos-creator-mode.real instead of compiling the Bash wrapper.
 python3 /workspace/scripts/patch-mechos-discord-creator-wrapper.py \
@@ -52,6 +54,8 @@ def main() -> None:
         r"(?:# The Desktop -> MechScope launcher is a normal user-session action\. It must not\n"
         r"# use loginctl, sudo, pkexec, or anything else that can request a password\.\n"
         r"bash /workspace/scripts/mechos-passwordless-return-integration\.sh final\n)?"
+        r"(?:# Installed systems authenticate after boot and resume, but never for mode switches\.\n"
+        r"bash /workspace/scripts/mechos-postinstall-auth-policy-integration\.sh final\n)?"
         r"(?:# Creator Mode is wrapped by the first-run tutorial\. Teach the Discord\n"
         r"# integration to patch mechos-creator-mode\.real instead of compiling the Bash wrapper\.\n"
         r"python3 /workspace/scripts/patch-mechos-discord-creator-wrapper\.py \\\n"
@@ -76,7 +80,7 @@ def main() -> None:
 
     print(
         f"[MechOS mode-switch patcher] safe in-session switching, Gamescope compatibility, "
-        f"passwordless return and Discord screen sharing added to {target}"
+        f"passwordless mode switching, installed authentication policy and Discord screen sharing added to {target}"
     )
 
 
