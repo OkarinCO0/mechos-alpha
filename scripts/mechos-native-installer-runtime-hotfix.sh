@@ -177,7 +177,7 @@ grep -Fq 'size=8MiB,type=21686148-6449-6E6F-744E-656564454649,name=MECHOS_BIOS' 
   || fail "8 MiB Legacy BIOS embedding partition is missing"
 grep -Fq 'MECHOS_DUAL_FIRMWARE_BOOT_V2' "$HELPER" \
   || fail "dual-firmware bootloader hardening is missing"
-grep -Fq "--target=i386-pc" "$HELPER" \
+grep -Fq -- '--target=i386-pc' "$HELPER" \
   || fail "Legacy BIOS GRUB target is missing"
 grep -Fq 'boot/grub/i386-pc/core.img' "$HELPER" \
   || fail "Legacy BIOS GRUB verification is missing"
