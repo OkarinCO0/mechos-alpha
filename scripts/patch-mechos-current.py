@@ -60,6 +60,8 @@ bash /workspace/scripts/mechos-optimization-report-ui-integration.sh final
 # Final installer authority: replace the remaining Clean Install handoff with
 # MechOS-owned partitioning, package provisioning, payload deployment and boot.
 bash /workspace/scripts/mechos-native-installer-integration.sh final
+# Apply small runtime hardening after the native helper has been generated.
+bash /workspace/scripts/mechos-native-installer-runtime-hotfix.sh final
 
 """
 
@@ -118,6 +120,7 @@ def main() -> None:
         and "mechos-installer-path-import-hotfix.sh final" in text
         and "mechos-live-update-keep-home-integration.sh final" in text
         and "mechos-native-installer-integration.sh final" in text
+        and "mechos-native-installer-runtime-hotfix.sh final" in text
     ):
         print(f"[MechOS current patcher] current integration already applied to {target}")
         return
@@ -158,6 +161,8 @@ def main() -> None:
         fail("Live Keep Home update integration was not wired")
     if "mechos-native-installer-integration.sh final" not in text:
         fail("native MechOS installer integration was not wired")
+    if "mechos-native-installer-runtime-hotfix.sh final" not in text:
+        fail("native installer runtime hotfix was not wired")
 
     target.write_text(text, encoding="utf-8")
     print(f"[MechOS current patcher] cumulative integration applied to {target}")
