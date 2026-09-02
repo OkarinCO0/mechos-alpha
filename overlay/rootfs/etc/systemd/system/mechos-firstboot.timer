@@ -1,0 +1,14 @@
+[Unit]
+Description=Start MechOS first-boot work after the graphical session is ready
+After=graphical.target
+ConditionPathExists=!/run/archiso/bootmnt
+ConditionPathExists=/var/lib/mechos/oobe-complete
+ConditionPathExists=!/var/lib/mechos/firstboot.done
+
+[Timer]
+OnActiveSec=2s
+AccuracySec=250ms
+Unit=mechos-firstboot.service
+
+[Install]
+WantedBy=timers.target
