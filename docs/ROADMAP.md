@@ -65,6 +65,25 @@
 - keep the disposable Live ISO non-updatable; Live users should download a newer ISO while installed systems receive supported hotfixes and release upgrades through Update Center
 - integrate OTA jobs into the planned MechScope Downloads UI with download progress, verification, install state, failure/retry status and restart-required notification
 
+### MechOS Bridge for Companion app
+
+- add a lightweight **MechOS Bridge** service to installed MechOS systems in 0.3.1 so the operating system is ready for the Android/iOS MechOS Companion app planned for 0.4
+- provide a versioned local API between the Companion app and MechOS instead of allowing the mobile app to execute arbitrary shell commands on the PC
+- make local-network pairing the default using a QR code or short one-time pairing code, with encrypted authenticated sessions and a clear paired-device/revoke screen
+- keep the bridge local-network-only by default for 0.3.1; do not expose the service directly to the public internet or add cloud remote access until a separately reviewed secure design exists
+- expose read-only system status through the bridge, including PC online state, active MechOS mode, running game/app, CPU/GPU/RAM usage, temperatures when available, network state, downloads, OTA update state and reboot-required status
+- expose permission-controlled actions for opening MechScope, Desktop Mode or Creator Mode, launching approved games/apps, basic media controls, recording/stream controls and mobile keyboard/touchpad input without exposing unrestricted command execution
+- require explicit confirmation for sensitive actions such as sleep, restart and shutdown and reject those actions from unpaired or revoked devices
+- provide a bridge event/notification channel for completed downloads, update results, game crashes and future RadarAI/MechClip events so the Companion app can receive user-enabled alerts without polling the whole system continuously
+- use granular per-device permissions so game launching, mode switching, power controls, notifications, system telemetry, media controls and creator integrations can each be enabled or disabled independently
+- store pairing keys/tokens using protected per-user/system storage, never place them in normal logs, diagnostic bundles or plaintext MechOS configuration files
+- run the normal bridge service with least privilege and isolate any narrowly required privileged operation behind a separate reviewed helper rather than running the entire bridge as root
+- add connection rate limits, request validation, device revocation and session expiration so a paired phone cannot silently retain unlimited access forever
+- add **MechScope Settings > Companion & Bridge** with bridge enable/disable, pairing, connected-device list, permission management, connection status, local address and diagnostic/test controls
+- keep the bridge disabled on the disposable Live ISO and make installed-system availability explicit so pairing cannot accidentally target a temporary Live session
+- define stable bridge endpoints in 0.3.1 for MechScope/library status, MechOS downloads/OTA, notifications and approved app/game launches so the 0.4 Companion app can build against a known interface
+- reserve extension points for MechClip, RadarAI, VRChat creator helpers and other future Companion features without requiring those integrations to be fully implemented in the initial 0.3.1 bridge
+
 ### Post-install network connection setup
 
 - add a dedicated **Network Connection** step to the installed-system post-install/OOBE flow before optional Creator downloads and the first MechScope handoff
@@ -220,6 +239,7 @@
 ## 0.4
 
 - MechOS Companion mobile app for Android/iOS with a controller-friendly remote dashboard for paired MechOS PCs
+- use the 0.3.1 MechOS Bridge as the Companion app's authenticated local connection and control layer instead of creating a separate remote-control backend in the mobile app
 - local-network-first pairing using a QR code or one-time pairing code, with encrypted authenticated connections and a clear paired-device/revoke screen
 - show PC online/offline state, active MechOS mode, currently running game/app and basic CPU/GPU/RAM/temperature status when available
 - remotely open MechScope, Desktop Mode or Creator Mode and launch approved games/apps from the paired PC without exposing unrestricted shell access
