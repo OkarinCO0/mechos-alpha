@@ -44,6 +44,7 @@ jobs:
           python3 scripts/patch-mechos-substance-painter.py scripts/build-mechos-archiso.sh
           python3 scripts/patch-mechos-creator-postinstall.py scripts/build-mechos-archiso.sh
           python3 scripts/patch-mechos-rgb-quick-actions.py scripts/build-mechos-archiso.sh
+          bash scripts/patch-mechos-live-autologin-partitionmanager.sh scripts/build-mechos-archiso.sh
           bash -n scripts/build-mechos-archiso.sh
           test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_EARLY$' scripts/build-mechos-archiso.sh)" -eq 1
           test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_LATE$' scripts/build-mechos-archiso.sh)" -eq 1
@@ -54,6 +55,9 @@ jobs:
           test "$(grep -c '^# MECHOS_CREATOR_POSTINSTALL_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
           test "$(grep -c '^# MECHOS_RGB_QUICK_ACTIONS_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
           grep -Fq 'mechos-gamescope-amd-compat-integration.sh final' scripts/build-mechos-archiso.sh
+          grep -qxF 'partitionmanager' scripts/build-mechos-archiso.sh
+          grep -Fq 'kdialog partitionmanager firefox' scripts/build-mechos-archiso.sh
+          grep -Fq 'Session=plasma' scripts/build-mechos-archiso.sh
 
       - name: Build MechOS ISO
         run: ./build-iso.sh
