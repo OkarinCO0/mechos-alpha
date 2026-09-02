@@ -29,8 +29,8 @@ patch_tree() {
   mkdir -p "$bin" "$apps" "$systemd_dir" "$systemd_dir/timers.target.wants"
 
   # Phase 2: deferred first-boot work must never hold graphical.target open.
-  # The timer itself waits until graphical.target is active, then gives the
-  # desktop two seconds to settle before launching low-priority setup work.
+  # The timer activates with the normal timer set but waits five seconds before
+  # launching low-priority setup work, keeping it outside the graphical chain.
   cat > "$unit" <<'FIRSTBOOT_EOF'
 [Unit]
 Description=MechOS background first-boot gaming and GPU setup
@@ -52,15 +52,14 @@ FIRSTBOOT_EOF
 
   cat > "$timer" <<'TIMER_EOF'
 [Unit]
-Description=Start MechOS first-boot work after the graphical session is ready
-After=graphical.target
+Description=Start MechOS first-boot work after startup settles
 ConditionPathExists=!/run/archiso/bootmnt
 ConditionPathExists=/var/lib/mechos/oobe-complete
 ConditionPathExists=!/var/lib/mechos/firstboot.done
 
 [Timer]
-OnActiveSec=2s
-AccuracySec=250ms
+OnActiveSec=5s
+AccuracySec=500ms
 Unit=mechos-firstboot.service
 
 [Install]
