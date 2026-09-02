@@ -40,12 +40,13 @@ def strip_existing_block(text: str) -> str:
     """Remove only this patcher's block, preserving other integration blocks."""
     # Integration patchers all insert immediately before mkarchiso and use an
     # all-caps MECHOS_* marker. Stop at the next integration marker or at the
-    # actual mkarchiso command. This is intentionally independent of the exact
-    # comments/commands inside older versions of this block.
+    # actual mkarchiso command. Keep the mkarchiso branch single-line even
+    # though the overall expression is DOTALL, otherwise an earlier bash line
+    # can accidentally satisfy the boundary by spanning forward to mkarchiso.
     pattern = re.compile(
         rf"\n{re.escape(MARKER)}\n.*?(?="
         rf"^# MECHOS_[A-Z0-9_]+(?:_INTEGRATION)?\s*$|"
-        rf"^(?!\s*#).*\bmkarchiso\b.*$)",
+        rf"^(?!\s*#)[^\n]*\bmkarchiso\b[^\n]*$)",
         flags=re.S | re.M,
     )
     return pattern.sub("\n", text)
@@ -62,7 +63,7 @@ def main() -> None:
 
     text = strip_existing_block(text)
 
-    mk_matches = list(re.finditer(r"(?m)^(?!\s*#).*\bmkarchiso\b.*$", text))
+    mk_matches = list(re.finditer(r"(?m)^(?!\s*#)[^\n]*\bmkarchiso\b[^\n]*$", text))
     if not mk_matches:
         fail("could not locate mkarchiso; refusing a blind patch")
 
@@ -72,8 +73,9 @@ def main() -> None:
 
     if text.count(MARKER) != 1:
         fail("safe mode-switch marker count is not exactly one")
-    if text.count("mechos-creator-mode-launch-hotfix.sh final") != 1:
-        fail("Creator Mode launch hotfix is missing or duplicated")
+    hotfix_count = text.count("mechos-creator-mode-launch-hotfix.sh final")
+    if hotfix_count != 1:
+        fail(f"Creator Mode launch hotfix count is {hotfix_count}, expected 1")
 
     print(
         f"[MechOS mode-switch patcher] safe in-session switching, Creator Mode service handoff, "
