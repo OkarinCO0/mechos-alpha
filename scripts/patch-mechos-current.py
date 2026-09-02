@@ -24,6 +24,9 @@ bash /workspace/scripts/mechos-alongside-integration.sh final
 # For whole-disk Clean Install, make the disk chosen in the Live graphical
 # selector the only disk that gets erased, partitioned, formatted and installed.
 bash /workspace/scripts/mechos-selected-drive-clean-install-integration.sh final
+# The location UI reads its JSON target with pathlib.Path. Ensure the final
+# generated installer imports Path so target selection cannot fail at runtime.
+bash /workspace/scripts/mechos-installer-path-import-hotfix.sh final
 # Configure the installed-system MechOS graphical GRUB boot menu before OOBE.
 bash /workspace/scripts/mechos-graphical-bootloader-integration.sh final
 # Add the post-install owner setup flow before any MechScope first-run UI.
@@ -99,13 +102,14 @@ def main() -> None:
     if not text.startswith("#!"):
         fail("target does not look like a shell builder")
 
-    # Once the current block already contains this feature, a second patch pass
-    # must be a byte-for-byte no-op. The project validator intentionally runs
-    # this patcher twice to enforce that property.
+    # Once the current block already contains the complete feature set, a
+    # second patch pass must be a byte-for-byte no-op. The project validator
+    # intentionally runs this patcher twice to enforce that property.
     if (
         text.count(MARKER_EARLY) == 1
         and text.count(MARKER_LATE) == 1
         and "mechos-selected-drive-clean-install-integration.sh final" in text
+        and "mechos-installer-path-import-hotfix.sh final" in text
     ):
         print(f"[MechOS current patcher] current integration already applied to {target}")
         return
@@ -140,6 +144,8 @@ def main() -> None:
         fail("integration markers are not unique after patching")
     if "mechos-selected-drive-clean-install-integration.sh final" not in text:
         fail("selected-drive clean-install integration was not wired")
+    if "mechos-installer-path-import-hotfix.sh final" not in text:
+        fail("Live installer Path import hotfix was not wired")
 
     target.write_text(text, encoding="utf-8")
     print(f"[MechOS current patcher] cumulative integration applied to {target}")
