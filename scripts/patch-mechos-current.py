@@ -71,6 +71,9 @@ bash /workspace/scripts/mechos-mechscope-shell-integration.sh final
 # FINAL VISUAL AUTHORITY: make every MechOS-owned PyQt surface follow the
 # approved graphical reference with one shared neon console/workstation system.
 bash /workspace/scripts/mechos-reference-ui-integration.sh final
+# FINAL LIVE AUTHORITY: no later compatibility block may re-enable SDDM relogin
+# loops or route a MechOS installer button back into Archinstall.
+bash /workspace/scripts/mechos-live-authority-hotfix.sh final
 
 """
 
@@ -133,6 +136,7 @@ def main() -> None:
         and "mechos-live-disk-routing-hotfix.sh final" in text
         and "mechos-mechscope-shell-integration.sh final" in text
         and "mechos-reference-ui-integration.sh final" in text
+        and "mechos-live-authority-hotfix.sh final" in text
     ):
         print(f"[MechOS current patcher] current integration already applied to {target}")
         return
@@ -181,6 +185,8 @@ def main() -> None:
         fail("MechScope shell integration was not wired")
     if "mechos-reference-ui-integration.sh final" not in text:
         fail("master graphical reference UI was not wired")
+    if "mechos-live-authority-hotfix.sh final" not in text:
+        fail("final Live login/native-installer authority was not wired")
 
     target.write_text(text, encoding="utf-8")
     print(f"[MechOS current patcher] cumulative integration applied to {target}")
