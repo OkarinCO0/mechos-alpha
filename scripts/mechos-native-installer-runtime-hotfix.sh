@@ -155,11 +155,23 @@ if marker not in text:
         raise SystemExit('[MechOS Native Installer Hotfix] could not locate error-output handler')
     text = text.replace(old, new, 1)
 
-    old = """        else:\n            self.status.setText(f'Installation stopped with error code {code}. The log is shown below.')\n            QMessageBox.critical(self,'MechOS Installer',f'Installation did not complete (error {code}).\\\n\\\nReview the installer log before rebooting.')\n"""
-    new = """        else:\n            reason = self.last_error or f'Installation stopped with error code {code}.'\n            self.status.setText(reason)\n            if not self.last_error:\n                self.log.appendPlainText(f'ERROR: installer exited with code {code} before reporting a detailed reason.')\n            QMessageBox.critical(\n                self, 'MechOS Installer',\n                f'Installation did not complete.\\n\\n{reason}\\n\\nThe full installer output is shown in this window.'\n            )\n"""
-    if old not in text:
-        raise SystemExit('[MechOS Native Installer Hotfix] could not locate installer finished error handler')
-    text = text.replace(old, new, 1)
+    # Do not match the old QMessageBox text literally: the generated installer
+    # contains escaped physical line continuations whose representation changes
+    # depending on which integration pass produced the file. Patch the failure
+    # branch structurally inside finished() instead.
+    finished_start = text.find("    def finished(self, code, _status):\n")
+    close_start = text.find("    def closeEvent(self,event):", finished_start)
+    if finished_start < 0 or close_start < 0:
+        raise SystemExit('[MechOS Native Installer Hotfix] could not locate installer finished function boundaries')
+
+    finished_block = text[finished_start:close_start]
+    else_pos = finished_block.rfind("        else:\n")
+    if else_pos < 0:
+        raise SystemExit('[MechOS Native Installer Hotfix] could not locate installer finished failure branch')
+
+    finished_prefix = finished_block[:else_pos]
+    finished_error = """        else:\n            # MECHOS_NATIVE_FINISHED_HANDLER_V2\n            reason = self.last_error or f'Installation stopped with error code {code}.'\n            self.status.setText(reason)\n            if not self.last_error:\n                self.log.appendPlainText(f'ERROR: installer exited with code {code} before reporting a detailed reason.')\n            QMessageBox.critical(\n                self, 'MechOS Installer',\n                f'Installation did not complete.\\n\\n{reason}\\n\\nThe full installer output is shown in this window.'\n            )\n\n"""
+    text = text[:finished_start] + finished_prefix + finished_error + text[close_start:]
 
 path.write_text(text, encoding='utf-8')
 PY
@@ -187,6 +199,8 @@ grep -Fq 'grub-script-check /boot/grub/grub.cfg' "$HELPER" \
   || fail "GRUB config validation is missing"
 grep -Fq 'MECHOS_NATIVE_ERROR_UI_V2' "$UI" \
   || fail "native installer detailed error UI is missing"
+grep -Fq 'MECHOS_NATIVE_FINISHED_HANDLER_V2' "$UI" \
+  || fail "native installer finished-handler hardening is missing"
 grep -Fq "self.last_error=line.split('=',1)[1].strip()" "$UI" \
   || fail "native installer no longer preserves helper failure reasons"
 
