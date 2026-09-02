@@ -25,7 +25,10 @@ grep -Fq 'grub-install --target=x86_64-efi' "$NATIVE" || fail "UEFI GRUB path is
 grep -Fq 'mechos-oobe' "$NATIVE" || fail "first-boot OOBE handoff is missing"
 grep -Fq 'subprocess.Popen(["/usr/local/bin/mechos-native-install"])' "$NATIVE" || fail "graphical installer native launch patch is missing"
 
-if grep -Fq 'archinstall --silent' "$NATIVE"; then
+# Match only a real command line in the generated helper. The integration
+# source intentionally contains the words "archinstall --silent" inside its own
+# negative build-time guard, which must not count as an invocation.
+if grep -Eq '^[[:space:]]*archinstall[[:space:]]+--silent([[:space:]]|$)' "$NATIVE"; then
   fail "native Clean Install still invokes Archinstall"
 fi
 
