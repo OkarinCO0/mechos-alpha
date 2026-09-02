@@ -68,15 +68,16 @@ bash /workspace/scripts/mechos-live-disk-routing-hotfix.sh final
 # Store/Downloads stay full-screen and the VM Plasma fallback hides desktop
 # chrome while MechScope is active.
 bash /workspace/scripts/mechos-mechscope-shell-integration.sh final
-# FINAL VISUAL AUTHORITY: make every MechOS-owned PyQt surface follow the
-# approved graphical reference with one shared neon console/workstation system.
+# Master colors, focus states, typography and reusable card controls.
 bash /workspace/scripts/mechos-reference-ui-integration.sh final
-# Rebuild the game Store and Creator Store as full Reference UI v3 surfaces and
-# keep Creator <-> MechScope transitions inside the authenticated session.
+# Rebuild the game Store and Creator Store as full Reference UI v3 surfaces.
 bash /workspace/scripts/mechos-reference-stores-v3-integration.sh final
-# Add separately installed RadarAI Flatpaks to Performance Center after the
-# final visual pass. This patches both the Live tree and installed payload.
+# Keep separately installed RadarAI discoverable from Performance Center.
 bash /workspace/scripts/mechos-radarai-performance-integration.sh final
+# FINAL INTERACTIVE SURFACE AUTHORITY: rebuild Performance Center, Update Center,
+# Quick Actions, Stream Center and Recovery around the approved graphical
+# reference, and harden Creator <-> MechScope same-session transitions.
+bash /workspace/scripts/mechos-reference-surfaces-v4-integration.sh final
 # FINAL LIVE AUTHORITY: no later compatibility block may re-enable SDDM relogin
 # loops or route a MechOS installer button back into Archinstall.
 bash /workspace/scripts/mechos-live-authority-hotfix.sh final
@@ -128,9 +129,6 @@ def main() -> None:
     if not text.startswith("#!"):
         fail("target does not look like a shell builder")
 
-    # Once the current block already contains the complete feature set, a
-    # second patch pass must be a byte-for-byte no-op. The project validator
-    # intentionally runs this patcher twice to enforce that property.
     if (
         text.count(MARKER_EARLY) == 1
         and text.count(MARKER_LATE) == 1
@@ -144,6 +142,7 @@ def main() -> None:
         and "mechos-reference-ui-integration.sh final" in text
         and "mechos-reference-stores-v3-integration.sh final" in text
         and "mechos-radarai-performance-integration.sh final" in text
+        and "mechos-reference-surfaces-v4-integration.sh final" in text
         and "mechos-live-authority-hotfix.sh final" in text
     ):
         print(f"[MechOS current patcher] current integration already applied to {target}")
@@ -177,28 +176,23 @@ def main() -> None:
 
     if text.count(MARKER_EARLY) != 1 or text.count(MARKER_LATE) != 1:
         fail("integration markers are not unique after patching")
-    if "mechos-selected-drive-clean-install-integration.sh final" not in text:
-        fail("selected-drive clean-install integration was not wired")
-    if "mechos-installer-path-import-hotfix.sh final" not in text:
-        fail("Live installer Path import hotfix was not wired")
-    if "mechos-live-update-keep-home-integration.sh final" not in text:
-        fail("Live Keep Home update integration was not wired")
-    if "mechos-native-installer-integration.sh final" not in text:
-        fail("native MechOS installer integration was not wired")
-    if "mechos-native-installer-runtime-hotfix.sh final" not in text:
-        fail("native installer runtime hotfix was not wired")
-    if "mechos-live-disk-routing-hotfix.sh final" not in text:
-        fail("Live disk routing hotfix was not wired")
-    if "mechos-mechscope-shell-integration.sh final" not in text:
-        fail("MechScope shell integration was not wired")
-    if "mechos-reference-ui-integration.sh final" not in text:
-        fail("master graphical reference UI was not wired")
-    if "mechos-reference-stores-v3-integration.sh final" not in text:
-        fail("Reference Store/Creator Store v3 integration was not wired")
-    if "mechos-radarai-performance-integration.sh final" not in text:
-        fail("RadarAI Performance Center integration was not wired")
-    if "mechos-live-authority-hotfix.sh final" not in text:
-        fail("final Live login/native-installer authority was not wired")
+    required = (
+        "mechos-selected-drive-clean-install-integration.sh final",
+        "mechos-installer-path-import-hotfix.sh final",
+        "mechos-live-update-keep-home-integration.sh final",
+        "mechos-native-installer-integration.sh final",
+        "mechos-native-installer-runtime-hotfix.sh final",
+        "mechos-live-disk-routing-hotfix.sh final",
+        "mechos-mechscope-shell-integration.sh final",
+        "mechos-reference-ui-integration.sh final",
+        "mechos-reference-stores-v3-integration.sh final",
+        "mechos-radarai-performance-integration.sh final",
+        "mechos-reference-surfaces-v4-integration.sh final",
+        "mechos-live-authority-hotfix.sh final",
+    )
+    for command in required:
+        if command not in text:
+            fail(f"required integration was not wired: {command}")
 
     target.write_text(text, encoding="utf-8")
     print(f"[MechOS current patcher] cumulative integration applied to {target}")
