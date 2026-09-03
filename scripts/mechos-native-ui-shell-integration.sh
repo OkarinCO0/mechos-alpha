@@ -36,7 +36,7 @@ import sys
 
 path=Path(sys.argv[1])
 text=path.read_text(encoding='utf-8')
-marker='# MECHOS_SOURCE_OWNED_SHELL_V2'
+marker='# MECHOS_SOURCE_OWNED_SHELL_V3'
 if marker in text:
     raise SystemExit(0)
 
@@ -59,7 +59,7 @@ if anchor < 0:
     raise SystemExit('[MechOS Native UI Shell] application startup anchor not found')
 
 override=r'''
-# MECHOS_SOURCE_OWNED_SHELL_V2
+# MECHOS_SOURCE_OWNED_SHELL_V3
 def _mechos_source_shell_module():
     import importlib.util
     import sys as _sys
@@ -78,7 +78,16 @@ def _mechos_source_shell_module():
     return module
 
 
+def _mechos_force_true_fullscreen(self):
+    # Qt/KWin can translate a pre-show FullScreen state into a maximized Plasma
+    # window on VM fallback sessions. Reassert real fullscreen after the event
+    # loop starts so no title bar, panel or maximized-window chrome remains.
+    self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+    self.showFullScreen()
+
+
 def _mechos_native_build_ui(self):
+    from PyQt6.QtCore import QTimer as _MechQTimer
     self.setWindowTitle('MechOS • MechScope 2.0')
     self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
     self.setWindowState(Qt.WindowState.WindowFullScreen)
@@ -113,6 +122,12 @@ def _mechos_native_build_ui(self):
     self.native_shell.set_recent_games(getattr(self,'games',[]), self.launch_game)
     if getattr(self,'focusables',None):
         self.focusables[0].setFocus()
+
+    # The original application startup can still call show()/showMaximized().
+    # These post-show assertions always win, on both Gamescope and Plasma/VM.
+    _MechQTimer.singleShot(0, lambda: _mechos_force_true_fullscreen(self))
+    _MechQTimer.singleShot(150, lambda: _mechos_force_true_fullscreen(self))
+    _MechQTimer.singleShot(750, lambda: _mechos_force_true_fullscreen(self))
 
 
 def _mechos_native_refresh_stats(self):
@@ -150,8 +165,9 @@ PY
   chmod 755 "$impl"
   PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$impl" "$target" \
     || fail "source-owned UI Python validation failed in $tree"
-  grep -Fq '# MECHOS_SOURCE_OWNED_SHELL_V2' "$impl" || fail "runtime did not receive source-shell marker"
+  grep -Fq '# MECHOS_SOURCE_OWNED_SHELL_V3' "$impl" || fail "runtime did not receive source-shell marker"
   grep -Fq 'MechScope.build_ui=_mechos_native_build_ui' "$impl" || fail "runtime is not using safe native UI override"
+  grep -Fq '_mechos_force_true_fullscreen' "$impl" || fail "runtime is not enforcing true fullscreen"
 }
 
 install_tree "$ROOT"
@@ -166,4 +182,4 @@ mv -f "$replacement" "$PAYLOAD"
 rm -rf "$tmp"
 trap - EXIT
 
-log 'MechScope visual authority moved to src/mechscope using safe runtime overrides; generated class is left intact'
+log 'MechScope visual authority uses safe runtime overrides and enforces true fullscreen after application startup'
