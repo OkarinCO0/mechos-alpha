@@ -66,18 +66,20 @@ bash /workspace/scripts/mechos-vm-ui-runtime-guard.sh
 # the active graphical environment into systemd --user and applies VM-only
 # rendering/Gamescope flags before the persistent mode service is started.
 bash /workspace/scripts/mechos-vm-shortcut-launch-hotfix.sh
-# FINAL MECHSCOPE VISUAL AUTHORITY. This installs the repository-owned 1920x1080
-# composition after every generated/reference/VM patch. No later integration is
-# allowed to replace MechScope.build_ui() with stretch-factor layouts.
+# FINAL MECHSCOPE VISUAL AUTHORITY. This installs the repository-owned approved
+# reference composition after generated/reference/VM layout passes.
 bash /workspace/scripts/mechos-native-ui-shell-integration.sh
 # FINAL PERFORMANCE RUNTIME AUTHORITY. Auto Optimization must never assume that
 # a physical `performance` power profile exists; VirtualBox and some real
 # hardware expose only balanced or no platform profile at all.
 bash /workspace/scripts/mechos-auto-optimization-hotfix.sh
 # FINAL SYSTEM UI AUTHORITY. Creator Mode, Quick Actions, Performance Center,
-# Update Center and Recovery Center now use repository-owned visual modules that
-# match the approved MechOS mockups. Legacy layouts remain backend-only.
+# Update Center, Recovery, Installer and OOBE use repository-owned visual modules.
 bash /workspace/scripts/mechos-source-owned-system-ui.sh
+# FINAL INSTALLED MECHSCOPE SESSION AUTHORITY. Correct the OOBE SDDM handoff,
+# force the permanent account into Gaming Mode, bypass Gamescope in VMs, and
+# retry through Plasma when Gamescope cannot start on physical hardware.
+bash /workspace/scripts/mechos-installed-mechscope-launch-hotfix.sh
 # FINAL BOOT SPLASH AUTHORITY. Use the approved reference artwork directly in
 # Plymouth instead of reconstructing it from the older logo/text animation.
 bash /workspace/scripts/mechos-reference-splash-integration.sh
