@@ -93,6 +93,10 @@ case "$MODE" in
     exit 1
     ;;
   creator)
+    if [ ! -x /usr/local/bin/mechos-creator-mode ]; then
+      notify_error "Creator Mode is not installed in this environment."
+      exit 1
+    fi
     if "$CONTROL" creator >>"$LOG" 2>&1; then
       log "Creator Mode launch request accepted"
       exit 0
@@ -114,13 +118,25 @@ LAUNCH_EOF
   bash -n "$bin/mechos-mode-launch" || fail "mode launcher shell syntax failed in $tree"
 }
 
-install_shortcuts() {
-  local tree="$1"
-  local installed="$2"
-  local apps="$tree/usr/share/applications"
-  local skel="$tree/etc/skel/Desktop"
-  mkdir -p "$apps"
+write_gaming_shortcut() {
+  local apps="$1"
+  cat > "$apps/mechos-return-gaming.desktop" <<'GAMING_DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Return to MechScope
+Comment=Open MechScope / Gaming Mode in the current Plasma session
+Exec=/usr/local/bin/mechos-mode-launch gaming
+TryExec=/usr/local/bin/mechos-mode-launch
+Icon=applications-games
+Terminal=false
+StartupNotify=true
+Categories=Game;System;
+GAMING_DESKTOP
+  chmod 644 "$apps/mechos-return-gaming.desktop"
+}
 
+write_creator_shortcut() {
+  local apps="$1"
   cat > "$apps/mechos-creator-mode.desktop" <<'CREATOR_DESKTOP'
 [Desktop Entry]
 Type=Application
@@ -134,27 +150,31 @@ StartupNotify=true
 Categories=Graphics;AudioVideo;Development;
 Keywords=MechOS;Creator;Blender;Unity;Unreal;VRChat;MechClip;
 CREATOR_DESKTOP
+  chmod 644 "$apps/mechos-creator-mode.desktop"
+}
 
-  cat > "$apps/mechos-return-gaming.desktop" <<'GAMING_DESKTOP'
-[Desktop Entry]
-Type=Application
-Name=Return to MechScope
-Comment=Open MechScope / Gaming Mode in the current Plasma session
-Exec=/usr/local/bin/mechos-mode-launch gaming
-TryExec=/usr/local/bin/mechos-mode-launch
-Icon=applications-games
-Terminal=false
-StartupNotify=true
-Categories=Game;System;
-GAMING_DESKTOP
+install_shortcuts() {
+  local tree="$1"
+  local installed="$2"
+  local apps="$tree/usr/share/applications"
+  local skel="$tree/etc/skel/Desktop"
+  mkdir -p "$apps"
 
-  chmod 644 "$apps/mechos-creator-mode.desktop" "$apps/mechos-return-gaming.desktop"
+  write_gaming_shortcut "$apps"
 
   if [ "$installed" = "yes" ]; then
+    write_creator_shortcut "$apps"
     mkdir -p "$skel"
     cp -f "$apps/mechos-creator-mode.desktop" "$skel/Creator-Mode.desktop"
     cp -f "$apps/mechos-return-gaming.desktop" "$skel/Return-to-MechScope.desktop"
     chmod 755 "$skel/Creator-Mode.desktop" "$skel/Return-to-MechScope.desktop"
+  else
+    # Creator Mode is post-install-only. Do not leave a dead Creator shortcut
+    # in the Live Plasma desktop after the temporarily staged UI is removed.
+    rm -f \
+      "$apps/mechos-creator-mode.desktop" \
+      "$tree/etc/skel/Desktop/Creator-Mode.desktop" \
+      "$tree/home/mechos/Desktop/Creator-Mode.desktop" 2>/dev/null || true
   fi
 }
 
@@ -171,17 +191,19 @@ validate_tree() {
   grep -Fq 'export MECHOS_DISABLE_GAMESCOPE=1' "$launch" || fail "VM Gamescope bypass missing"
   grep -Fq 'systemctl --user import-environment' "$launch" || fail "graphical environment handoff missing"
   grep -Fq 'mechos-gaming-layer-control' "$launch" || fail "mode controller handoff missing"
-  grep -Fq 'Exec=/usr/local/bin/mechos-mode-launch creator' "$creator" || fail "Creator shortcut bypasses shared launcher"
   grep -Fq 'Exec=/usr/local/bin/mechos-mode-launch gaming' "$gaming" || fail "MechScope shortcut bypasses shared launcher"
 
   if [ "$installed" = "yes" ]; then
+    grep -Fq 'Exec=/usr/local/bin/mechos-mode-launch creator' "$creator" || fail "Creator shortcut bypasses shared launcher"
     [ -x "$tree/etc/skel/Desktop/Creator-Mode.desktop" ] || fail "installed Creator desktop shortcut missing"
     [ -x "$tree/etc/skel/Desktop/Return-to-MechScope.desktop" ] || fail "installed MechScope desktop shortcut missing"
+  else
+    [ ! -e "$creator" ] || fail "Creator shortcut leaked back into Live"
   fi
 }
 
-# Keep the public launcher available in Live for debugging/MechScope testing,
-# but the installed payload is authoritative for Creator Mode and user shortcuts.
+# Keep the shared launcher and MechScope shortcut available in Live for testing.
+# Creator Mode itself and its shortcut remain post-install-only.
 install_helper "$ROOT"
 install_shortcuts "$ROOT" no
 validate_tree "$ROOT" no
