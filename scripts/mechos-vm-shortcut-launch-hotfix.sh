@@ -4,6 +4,7 @@ set -Eeuo pipefail
 ROOT="/workspace/archlive/airootfs"
 ARCHIVE="$ROOT/usr/share/mechos/install-payload/mechos-rootfs.tar.zst"
 PROFILE="/workspace/archlive/profiledef.sh"
+POSTINSTALL="$ROOT/usr/share/mechos/install-payload/mechos-postinstall-target"
 
 log() { printf '[MechOS VM Shortcut Launch] %s\n' "$*"; }
 fail() { printf '[MechOS VM Shortcut Launch] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -48,8 +49,6 @@ esac
 
 virt="$(systemd-detect-virt 2>/dev/null || true)"
 if [ -n "$virt" ] && [ "$virt" != "none" ]; then
-  # VM-only runtime policy. Physical AMD/Intel/NVIDIA systems do not receive
-  # these flags and continue through the normal accelerated Gamescope path.
   export MECHOS_VM_MODE=1
   export MECHOS_DISABLE_GAMESCOPE=1
   export QT_OPENGL=software
@@ -63,9 +62,6 @@ fi
 
 log "mode=$MODE session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"
 
-# Desktop shortcuts are launched by Plasma as transient application units.
-# MechScope/Creator themselves run as persistent systemd user services, so the
-# user manager must receive the current Plasma/Wayland/DBus environment first.
 if systemctl --user show-environment >/dev/null 2>&1; then
   systemctl --user import-environment \
     DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS \
@@ -118,13 +114,41 @@ LAUNCH_EOF
   bash -n "$bin/mechos-mode-launch" || fail "mode launcher shell syntax failed in $tree"
 }
 
+purge_legacy_shortcuts() {
+  local tree="$1"
+  local d f
+  for d in \
+    "$tree/usr/share/applications" \
+    "$tree/etc/skel/Desktop" \
+    "$tree/home/mechos/Desktop"
+  do
+    [ -d "$d" ] || continue
+    while IFS= read -r -d '' f; do
+      if grep -Eq '^Exec=/usr/local/bin/(mechos-return-to-mechscope|mechscope|mechos-creator-mode)([[:space:]]|$)' "$f" 2>/dev/null; then
+        rm -f "$f"
+      fi
+    done < <(find "$d" -maxdepth 1 -type f -name '*.desktop' -print0 2>/dev/null)
+  done
+
+  # Known legacy names from older builds. Removing by name as well prevents a
+  # stale desktop file with an edited Exec line from surviving an upgrade.
+  rm -f \
+    "$tree/usr/share/applications/mechos-return-to-mechscope.desktop" \
+    "$tree/usr/share/applications/mechscope.desktop" \
+    "$tree/usr/share/applications/mechos-gaming.desktop" \
+    "$tree/etc/skel/Desktop/MechScope.desktop" \
+    "$tree/etc/skel/Desktop/Gaming-Mode.desktop" \
+    "$tree/home/mechos/Desktop/MechScope.desktop" \
+    "$tree/home/mechos/Desktop/Gaming-Mode.desktop" 2>/dev/null || true
+}
+
 write_gaming_shortcut() {
   local apps="$1"
   cat > "$apps/mechos-return-gaming.desktop" <<'GAMING_DESKTOP'
 [Desktop Entry]
 Type=Application
 Name=Return to MechScope
-Comment=Open MechScope / Gaming Mode in the current Plasma session
+Comment=Open MechScope / Gaming Mode using the current VM-safe MechOS launcher
 Exec=/usr/local/bin/mechos-mode-launch gaming
 TryExec=/usr/local/bin/mechos-mode-launch
 Icon=applications-games
@@ -141,7 +165,7 @@ write_creator_shortcut() {
 [Desktop Entry]
 Type=Application
 Name=MechOS Creator Mode
-Comment=Open the MechOS creator workstation
+Comment=Open the MechOS creator workstation using the current VM-safe launcher
 Exec=/usr/local/bin/mechos-mode-launch creator
 TryExec=/usr/local/bin/mechos-mode-launch
 Icon=applications-graphics
@@ -160,6 +184,7 @@ install_shortcuts() {
   local skel="$tree/etc/skel/Desktop"
   mkdir -p "$apps"
 
+  purge_legacy_shortcuts "$tree"
   write_gaming_shortcut "$apps"
 
   if [ "$installed" = "yes" ]; then
@@ -169,13 +194,29 @@ install_shortcuts() {
     cp -f "$apps/mechos-return-gaming.desktop" "$skel/Return-to-MechScope.desktop"
     chmod 755 "$skel/Creator-Mode.desktop" "$skel/Return-to-MechScope.desktop"
   else
-    # Creator Mode is post-install-only. Do not leave a dead Creator shortcut
-    # in the Live Plasma desktop after the temporarily staged UI is removed.
     rm -f \
       "$apps/mechos-creator-mode.desktop" \
       "$tree/etc/skel/Desktop/Creator-Mode.desktop" \
       "$tree/home/mechos/Desktop/Creator-Mode.desktop" 2>/dev/null || true
   fi
+}
+
+patch_postinstall_shortcuts() {
+  [ -f "$POSTINSTALL" ] || return 0
+  python3 - "$POSTINSTALL" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+t=p.read_text(encoding='utf-8')
+t=t.replace('/usr/share/applications/mechos-return-to-mechscope.desktop',
+            '/usr/share/applications/mechos-return-gaming.desktop')
+needle='cp -f /usr/share/applications/mechos-return-gaming.desktop \\\n  "$HOME_DIR/Desktop/Return-to-MechScope.desktop" 2>/dev/null || true\n'
+creator='cp -f /usr/share/applications/mechos-creator-mode.desktop \\\n  "$HOME_DIR/Desktop/Creator-Mode.desktop" 2>/dev/null || true\n'
+if needle in t and creator not in t:
+    t=t.replace(needle, needle+creator)
+p.write_text(t,encoding='utf-8')
+PY
+  bash -n "$POSTINSTALL" || fail "post-install target syntax failed after shortcut cleanup"
 }
 
 validate_tree() {
@@ -193,19 +234,23 @@ validate_tree() {
   grep -Fq 'mechos-gaming-layer-control' "$launch" || fail "mode controller handoff missing"
   grep -Fq 'Exec=/usr/local/bin/mechos-mode-launch gaming' "$gaming" || fail "MechScope shortcut bypasses shared launcher"
 
+  [ ! -e "$tree/usr/share/applications/mechos-return-to-mechscope.desktop" ] || fail "legacy return shortcut still present"
+  [ ! -e "$tree/usr/share/applications/mechscope.desktop" ] || fail "legacy direct MechScope shortcut still present"
+
   if [ "$installed" = "yes" ]; then
     grep -Fq 'Exec=/usr/local/bin/mechos-mode-launch creator' "$creator" || fail "Creator shortcut bypasses shared launcher"
     [ -x "$tree/etc/skel/Desktop/Creator-Mode.desktop" ] || fail "installed Creator desktop shortcut missing"
     [ -x "$tree/etc/skel/Desktop/Return-to-MechScope.desktop" ] || fail "installed MechScope desktop shortcut missing"
+    grep -Fq 'Exec=/usr/local/bin/mechos-mode-launch creator' "$tree/etc/skel/Desktop/Creator-Mode.desktop" || fail "installed Creator desktop copy is legacy"
+    grep -Fq 'Exec=/usr/local/bin/mechos-mode-launch gaming' "$tree/etc/skel/Desktop/Return-to-MechScope.desktop" || fail "installed MechScope desktop copy is legacy"
   else
     [ ! -e "$creator" ] || fail "Creator shortcut leaked back into Live"
   fi
 }
 
-# Keep the shared launcher and MechScope shortcut available in Live for testing.
-# Creator Mode itself and its shortcut remain post-install-only.
 install_helper "$ROOT"
 install_shortcuts "$ROOT" no
+patch_postinstall_shortcuts
 validate_tree "$ROOT" no
 
 tmp="$(mktemp -d)"
@@ -214,7 +259,6 @@ tar --zstd -xpf "$ARCHIVE" -C "$tmp"
 install_helper "$tmp"
 install_shortcuts "$tmp" yes
 validate_tree "$tmp" yes
-
 replacement="$ARCHIVE.vm-shortcuts"
 tar --zstd -cpf "$replacement" -C "$tmp" .
 mv -f "$replacement" "$ARCHIVE"
@@ -227,4 +271,4 @@ if [ -f "$PROFILE" ]; then
   fi
 fi
 
-log "Creator Mode and MechScope shortcuts now share a VM-safe Plasma/systemd launch path"
+log "Only the newest VM-safe MechScope and Creator Mode shortcuts remain; legacy direct launchers were removed"
