@@ -18,7 +18,7 @@ grep -Fq 'https://aur.archlinux.org' "$SRC" || fail "AUR git source missing"
 grep -Fq 'MechOS AUR Packages' "$SRC" || fail "AUR GUI/desktop entry missing"
 grep -Fq 'MECHOS_AUR_UPDATE_CENTER_V1' "$SRC" || fail "Update Center integration marker missing"
 grep -Fq 'pl.addWidget(self.update_button)' "$SRC" || fail "Reference v5 Update Center anchor missing"
-grep -Fq 'spawn([\"/usr/local/bin/mechos-aur-gui\"])' "$SRC" || fail "AUR Update Center launch path missing"
+grep -Fq 'spawn(["/usr/local/bin/mechos-aur-gui"])' "$SRC" || fail "AUR Update Center launch path missing"
 grep -Fq 'mechos-aur-helper-integration.sh' "$PATCHER" || fail "AUR helper is not wired into final v5 build"
 
 TMP="$(mktemp -d)"
