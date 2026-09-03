@@ -41,6 +41,8 @@ jobs:
           bash scripts/validate-creator-mode-launch.sh
           bash scripts/validate-reference-v5.sh
           bash scripts/validate-live-installer-runtime-guard.sh
+          bash scripts/validate-vm-ui-runtime-guard.sh
+          bash scripts/validate-vm-shortcut-launch.sh
 
       - name: Apply cumulative MechOS integration
         run: |
@@ -77,6 +79,8 @@ jobs:
           grep -Fq 'mechos-reference-v5-controls-compat.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-v5-installer-layout.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-live-installer-runtime-guard.sh' scripts/build-mechos-archiso.sh
+          grep -Fq 'mechos-vm-ui-runtime-guard.sh' scripts/build-mechos-archiso.sh
+          grep -Fq 'mechos-vm-shortcut-launch-hotfix.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-finalize-install-payload.sh final' scripts/build-mechos-archiso.sh
           grep -qxF 'partitionmanager' scripts/build-mechos-archiso.sh
           grep -Fq 'kdialog partitionmanager firefox' scripts/build-mechos-archiso.sh
