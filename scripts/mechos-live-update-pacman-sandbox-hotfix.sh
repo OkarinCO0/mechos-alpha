@@ -102,7 +102,7 @@ bash -n "$FILE" || fail "patched Live Update helper failed shell syntax"
 grep -Fq 'MECHOS_LIVE_UPDATE_PACMAN_SANDBOX_V1' "$FILE" || fail "sandbox marker missing"
 grep -Fq 'systemd-sysusers' "$FILE" || fail "system-user repair missing"
 grep -Fq 'pacman-conf DownloadUser' "$FILE" || fail "DownloadUser validation missing"
-grep -Fq "-name 'download-*'" "$FILE" || fail "stale download cleanup missing"
+grep -Fq -- "-name 'download-*'" "$FILE" || fail "stale download cleanup missing"
 grep -Fq -- '--disable-sandbox' "$FILE" || fail "one-shot sandbox fallback missing"
 grep -Fq 'if pacman_live_update; then' "$FILE" || fail "package refresh does not use hardened path"
 
