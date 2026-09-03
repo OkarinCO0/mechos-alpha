@@ -17,22 +17,17 @@ patch_tree(){
   local real="$public.real"
   local perf=""
 
-  # Reference UI v5 can leave both a public Python implementation and an older
-  # .real compatibility target behind. Prefer whichever file actually owns the
-  # final Perf class. Only fall back to .real when the public file is a wrapper.
+  # Patch the implementation that actually owns Perf. Reference/UI wrapper
+  # passes are free to leave both public and .real files behind.
   if [ -f "$public" ] && grep -Fq 'class Perf(' "$public"; then
     perf="$public"
   elif [ -f "$real" ] && grep -Fq 'class Perf(' "$real"; then
     perf="$real"
-  elif [ -f "$public" ]; then
-    perf="$public"
-  elif [ -f "$real" ]; then
-    perf="$real"
   else
-    fail "Performance Center missing from $tree"
+    fail "final Performance Center implementation not found in $tree"
   fi
 
-  log "patching Performance Center implementation: ${perf#$tree}"
+  log "patching hardware-aware profile backend: ${perf#$tree}"
 
   python3 - "$perf" <<'PY'
 from pathlib import Path
@@ -41,59 +36,33 @@ import sys
 
 path=Path(sys.argv[1])
 text=path.read_text(encoding='utf-8')
-marker='# MECHOS_AUTO_OPTIMIZATION_V4'
+marker='# MECHOS_PROFILE_BACKEND_V5'
 if marker in text:
     raise SystemExit(0)
 
 try:
     tree=ast.parse(text,str(path))
 except SyntaxError as exc:
-    raise SystemExit(f'[MechOS Auto Optimization] Performance Center is invalid before optimization patch: {exc}')
+    raise SystemExit(f'[MechOS Auto Optimization] Performance Center is invalid before backend patch: {exc}')
 
-def action_segments(source, parsed):
-    found=[]
-    for node in ast.walk(parsed):
-        if not isinstance(node,ast.Call):
-            continue
-        fn=node.func
-        if not isinstance(fn,ast.Attribute) or fn.attr!='action' or not node.args:
-            continue
-        first=node.args[0]
-        if not isinstance(first,ast.Constant) or not isinstance(first.value,str):
-            continue
-        if first.value not in {'Auto Optimization','Optimize Now'}:
-            continue
-        segment=ast.get_source_segment(source,node)
-        if segment:
-            found.append((first.value,segment))
-    return found
+profile_fn=None
+for node in ast.walk(tree):
+    if isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef)) and node.name=='set_profile':
+        profile_fn=node
+        break
+if profile_fn is None or not hasattr(profile_fn,'end_lineno'):
+    raise SystemExit('[MechOS Auto Optimization] set_profile backend not found in final Performance Center')
 
-segments=action_segments(text,tree)
-found_auto=False
-for label,segment in segments:
-    if label=='Auto Optimization':
-        replacement="self.action('Auto Optimization','Choose the best profile for this hardware',lambda:mechos_auto_optimize(self))"
-        found_auto=True
-    else:
-        replacement="self.action('Optimize Now','Apply hardware-aware gaming settings',lambda:mechos_auto_optimize(self))"
-    text=text.replace(segment,replacement,1)
-
-if not found_auto:
-    raise SystemExit('[MechOS Auto Optimization] Auto Optimization action not found in selected final Performance Center implementation')
-
-cls=text.find('class Perf(')
-if cls < 0:
-    raise SystemExit('[MechOS Auto Optimization] Perf class not found')
-
-helper=r'''# MECHOS_AUTO_OPTIMIZATION_V4
-def mechos_auto_optimize(parent):
-    """Apply the best safe runtime profile exposed by the current hardware."""
+replacement=r'''# MECHOS_PROFILE_BACKEND_V5
+def set_profile(profile, parent=None):
+    """Set the requested profile without treating unsupported hardware as an error."""
     import re as _re
     import shutil as _shutil
     import subprocess as _sp
     from pathlib import Path as _Path
     from PyQt6.QtWidgets import QMessageBox as _QMessageBox
 
+    requested=str(profile or '').strip() or 'balanced'
     notes=[]
     chosen=None
     virt=''
@@ -109,62 +78,71 @@ def mechos_auto_optimize(parent):
     if _shutil.which('powerprofilesctl'):
         probe=_sp.run(['powerprofilesctl','list'], text=True, capture_output=True)
         if probe.returncode == 0:
-            available=_re.findall(r'^\\s*\\*?\\s*([a-z][a-z0-9-]+):', probe.stdout, _re.M)
+            available=_re.findall(r'^\s*\*?\s*([a-z][a-z0-9-]+):', probe.stdout, _re.M)
         current=_sp.run(['powerprofilesctl','get'], text=True, capture_output=True)
         current_name=current.stdout.strip() if current.returncode == 0 else ''
         if current_name and current_name not in available:
             available.append(current_name)
 
-        candidates=['balanced','power-saver'] if virtual else ['performance','balanced','power-saver']
-        chosen=next((p for p in candidates if p in available), None)
+        if requested == 'performance':
+            candidates=(['balanced','power-saver'] if virtual else ['performance','balanced','power-saver'])
+        else:
+            candidates=[requested]
+            for fallback in ['balanced','power-saver'] + ([] if virtual else ['performance']):
+                if fallback not in candidates:
+                    candidates.append(fallback)
+
+        chosen=next((candidate for candidate in candidates if candidate in available),None)
         if chosen:
             result=_sp.run(['powerprofilesctl','set',chosen], text=True, capture_output=True)
             if result.returncode == 0:
-                notes.append(f'Power profile: {chosen}')
+                if chosen == requested:
+                    notes.append(f'Power profile: {chosen}')
+                else:
+                    notes.append(f'Requested {requested}; using supported profile: {chosen}')
             else:
                 detail=(result.stderr or result.stdout).strip()
                 notes.append('Power profile unchanged' + (f' ({detail})' if detail else ''))
                 chosen=None
         elif available:
-            notes.append('Power profile unchanged; supported profiles: '+', '.join(available))
+            notes.append('No compatible requested profile; supported profiles: '+', '.join(available))
         else:
-            notes.append('Power profile control is present, but this hardware exposes no selectable profiles')
+            notes.append('This hardware exposes no selectable power profiles')
     else:
         notes.append('Power profile control is unavailable on this hardware')
 
     if virtual:
-        notes.append(f'VM-safe optimization enabled ({virt}); physical CPU/GPU power tuning skipped')
-    else:
-        notes.append('Physical hardware detected; best supported MechOS power profile selected')
-
-    notes.append('GameMode: available for game launches' if _shutil.which('gamemoderun') else 'GameMode: not installed')
-    notes.append('MangoHud: available for performance monitoring' if _shutil.which('mangohud') else 'MangoHud: not installed')
+        notes.append(f'VM-safe mode: {virt}; physical performance tuning skipped')
+    notes.append('GameMode available' if _shutil.which('gamemoderun') else 'GameMode unavailable')
+    notes.append('MangoHud available' if _shutil.which('mangohud') else 'MangoHud unavailable')
 
     try:
         state=_Path.home()/'.local/state/mechos'
-        state.mkdir(parents=True, exist_ok=True)
-        with (state/'auto-optimization.log').open('a', encoding='utf-8') as f:
-            f.write('\\n'.join(notes)+'\\n---\\n')
+        state.mkdir(parents=True,exist_ok=True)
+        with (state/'auto-optimization.log').open('a',encoding='utf-8') as handle:
+            handle.write(f'requested={requested} chosen={chosen or "unchanged"} virtual={virt or "none"}\n')
+            handle.write('\n'.join(notes)+'\n---\n')
     except Exception:
         pass
 
-    title='MechOS Auto Optimization'
-    message='Optimization completed with hardware-aware settings.\\n\\n'+'\\n'.join('• '+n for n in notes)
-    _QMessageBox.information(parent,title,message)
+    _QMessageBox.information(parent,'MechOS Performance','\n'.join(notes))
     return chosen
-
 '''
-text=text[:cls]+helper+text[cls:]
-compile(text,str(path),'exec')
-path.write_text(text,encoding='utf-8')
+
+lines=text.splitlines(keepends=True)
+start=profile_fn.lineno-1
+end=profile_fn.end_lineno
+new_text=''.join(lines[:start])+replacement+'\n'+''.join(lines[end:])
+compile(new_text,str(path),'exec')
+path.write_text(new_text,encoding='utf-8')
 PY
 
   chmod 755 "$perf"
   PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$perf" \
     || fail "Performance Center Python validation failed in $tree"
-  grep -Fq '# MECHOS_AUTO_OPTIMIZATION_V4' "$perf" || fail "auto optimization helper marker missing"
-  grep -Fq 'lambda:mechos_auto_optimize(self)' "$perf" || fail "Auto Optimization is not wired to hardware-aware helper"
-  grep -Fq 'systemd-detect-virt' "$perf" || fail "VM detection missing from Auto Optimization"
+  grep -Fq '# MECHOS_PROFILE_BACKEND_V5' "$perf" || fail "hardware-aware profile backend marker missing"
+  grep -Fq "def set_profile(profile, parent=None):" "$perf" || fail "hardware-aware set_profile signature missing"
+  grep -Fq 'systemd-detect-virt' "$perf" || fail "VM detection missing from profile backend"
 }
 
 patch_tree "$ROOT"
@@ -179,4 +157,4 @@ mv -f "$replacement" "$ARCHIVE"
 rm -rf "$tmp"
 trap - EXIT
 
-log 'Auto Optimization is wired to the final Performance Center implementation with VM/hardware-aware profiles'
+log 'Performance Center profile backend is hardware-aware; Auto Optimization no longer depends on UI button rewriting'
