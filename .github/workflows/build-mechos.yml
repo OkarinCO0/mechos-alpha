@@ -39,6 +39,7 @@ jobs:
           bash scripts/validate-reference-surfaces-v4.sh
           bash scripts/validate-radarai-performance-integration.sh
           bash scripts/validate-creator-mode-launch.sh
+          bash scripts/validate-reference-v5.sh
 
       - name: Apply cumulative MechOS integration
         run: |
@@ -51,6 +52,7 @@ jobs:
           python3 scripts/patch-mechos-creator-postinstall.py scripts/build-mechos-archiso.sh
           python3 scripts/patch-mechos-rgb-quick-actions.py scripts/build-mechos-archiso.sh
           bash scripts/patch-mechos-live-autologin-partitionmanager.sh scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-reference-v5.py scripts/build-mechos-archiso.sh
           bash -n scripts/build-mechos-archiso.sh
           test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_EARLY$' scripts/build-mechos-archiso.sh)" -eq 1
           test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_LATE$' scripts/build-mechos-archiso.sh)" -eq 1
@@ -60,11 +62,14 @@ jobs:
           test "$(grep -c '^# MECHOS_SUBSTANCE_PAINTER_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
           test "$(grep -c '^# MECHOS_CREATOR_POSTINSTALL_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
           test "$(grep -c '^# MECHOS_RGB_QUICK_ACTIONS_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
+          test "$(grep -c '^# MECHOS_REFERENCE_UI_V5_FINAL$' scripts/build-mechos-archiso.sh)" -eq 1
           grep -Fq 'mechos-gamescope-amd-compat-integration.sh final' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-ui-integration.sh final' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-stores-v3-integration.sh final' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-radarai-performance-integration.sh final' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-surfaces-v4-integration.sh final' scripts/build-mechos-archiso.sh
+          grep -Fq 'mechos-reference-v5-integration.sh final' scripts/build-mechos-archiso.sh
+          grep -Fq 'mechos-finalize-install-payload.sh final' scripts/build-mechos-archiso.sh
           grep -qxF 'partitionmanager' scripts/build-mechos-archiso.sh
           grep -Fq 'kdialog partitionmanager firefox' scripts/build-mechos-archiso.sh
           grep -Fq 'Session=plasma' scripts/build-mechos-archiso.sh
