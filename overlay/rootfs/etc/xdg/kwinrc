@@ -1,0 +1,11 @@
+# MechOS low-latency KWin defaults
+# Disable compositor transition effects that can make Plasma popups and
+# session screens feel blocked while an animation is still running.
+[Plugins]
+fadeEnabled=false
+fadingpopupsEnabled=false
+slidingpopupsEnabled=false
+loginEnabled=false
+logoutEnabled=false
+kwin4_effect_maximizeEnabled=false
+squashEnabled=false
