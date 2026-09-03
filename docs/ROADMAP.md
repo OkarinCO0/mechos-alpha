@@ -240,6 +240,36 @@
 - reduce ISO size and split optional creator packages
 - signed release checksums
 
+## 0.3.4 — planned
+
+### Desktop theme layouts
+
+- add a dedicated **Desktop Theme Layouts** manager for installed MechOS Desktop Mode so users can change the Plasma desktop arrangement without changing or breaking MechScope, Creator Mode or the underlying user session
+- ship multiple MechOS-authored layout presets while keeping the same dark blue/purple neon visual language across them, including **MechOS Default**, **Gaming Desktop**, **Creator Workstation**, **Compact**, and **Classic Plasma** layouts
+- make **MechOS Default** match the approved MechOS reference language with a clean bottom taskbar, MechOS launcher, themed system tray, coordinated wallpaper, neon accenting and consistent window styling
+- make **Gaming Desktop** prioritize quick access to Steam, Unified Store, Performance Center, Discord, recordings, downloads and Return to MechScope with a simplified desktop and minimal background widgets
+- make **Creator Workstation** prioritize Creator Mode, project folders, Blender, Unity/Unity Hub, Unreal Engine, OBS, Krita, Kdenlive, VRChat tools and creator storage/status widgets when those tools are installed
+- make **Compact** use a smaller panel, reduced spacing and denser system tray/task-manager layout for lower-resolution displays, handhelds and VM testing while keeping all essential controls readable
+- keep **Classic Plasma** as a familiar KDE-style fallback layout using MechOS colors/icons so users can return to a conventional desktop arrangement without losing MechOS integration
+- provide a graphical **Settings > Appearance > Desktop Layout** page with large visual previews, **Apply**, **Preview**, **Save Current Layout**, **Reset to MechOS Default** and **Restore Previous Layout** actions
+- allow layout switching from Desktop Mode without requiring a reboot; when Plasma shell restart is required, save the user's session/layout state first and restart only the shell components needed for the change
+- preserve open applications, user files, game installations, Creator projects and application settings when changing layouts; layout changes must affect presentation/configuration only
+- keep panel placement, panel height, launcher style, task manager arrangement, system tray placement, desktop icons/widgets, workspace behavior and wallpaper assignment inside the layout profile instead of hard-coding one desktop arrangement globally
+- allow users to customize a preset after applying it and save the result as a named **Custom MechOS Layout** without modifying the built-in presets
+- store per-user desktop layout configuration under the user's normal configuration space and keep it separate from system-wide MechScope/Creator Mode configuration
+- add layout export/import using readable versioned MechOS layout metadata where practical, while validating imported profiles before applying them so malformed profiles cannot leave Plasma unusable
+- provide a safe automatic backup of the current Plasma layout immediately before applying another preset and expose one-click rollback when a panel/widget/layout change fails
+- add a recovery fallback that recreates the **MechOS Default** panel and launcher if the user's Plasma shell configuration becomes missing or invalid
+- keep the **instant / low-latency UI policy** introduced during 0.3.x development: desktop layout presets must not re-enable blocking fade animations that buffer clicks or keyboard input until an animation completes
+- keep animation/reduced-motion preferences independent from layout choice so users can choose a visual layout without unexpectedly changing accessibility or responsiveness settings
+- use the same MechOS icon, color, window-decoration, notification, launcher, system-tray, lock-screen and power-screen visual language across all built-in layouts so switching layout changes arrangement rather than making the OS look unrelated
+- make the desktop layout manager usable with controller, keyboard, mouse and touch, with controller focus order and preview/apply actions that do not require a mouse
+- support multi-monitor layout profiles, including primary-display panel placement and sensible per-display wallpaper behavior, while keeping monitor resolution/refresh configuration separate from the visual layout preset
+- detect VM/low-resolution environments and recommend the **Compact** layout when appropriate without automatically overriding the user's chosen layout
+- make Desktop Theme Layouts an **installed-system feature only**; the disposable Live environment keeps its installation/testing-focused Plasma layout and must not overwrite the user's post-install desktop choice
+- include the selected desktop layout name/version in MechOS diagnostics and Optimization Report metadata so layout-related Plasma problems can be reproduced without collecting unrelated personal desktop data
+- deliver built-in layout updates through reviewed MechOS OTA packages while preserving user-created layouts and the user's currently selected preset
+
 ## 0.4
 
 - MechOS Companion mobile app for Android/iOS with a controller-friendly remote dashboard for paired MechOS PCs
