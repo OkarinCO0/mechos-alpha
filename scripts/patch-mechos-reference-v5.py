@@ -70,6 +70,10 @@ bash /workspace/scripts/mechos-vm-shortcut-launch-hotfix.sh
 # composition after every generated/reference/VM patch. No later integration is
 # allowed to replace MechScope.build_ui() with stretch-factor layouts.
 bash /workspace/scripts/mechos-native-ui-shell-integration.sh
+# FINAL PERFORMANCE RUNTIME AUTHORITY. Auto Optimization must never assume that
+# a physical `performance` power profile exists; VirtualBox and some real
+# hardware expose only balanced or no platform profile at all.
+bash /workspace/scripts/mechos-auto-optimization-hotfix.sh
 bash /workspace/scripts/mechos-reference-v5-postinstall-stage.sh commit
 bash /workspace/scripts/mechos-finalize-install-payload.sh final
 '''
