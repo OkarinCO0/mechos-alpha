@@ -2,10 +2,12 @@
 set -euo pipefail
 
 GUARD=scripts/mechos-live-installer-runtime-guard.sh
+FALLBACK=scripts/mechos-live-installer-crash-fallback.sh
 PATCHER=scripts/patch-mechos-reference-v5.py
 INSTALLER=scripts/mechos-reference-v5-installer-layout.sh
 
 bash -n "$GUARD"
+bash -n "$FALLBACK"
 bash -n "$INSTALLER"
 python3 -m py_compile "$PATCHER"
 
@@ -19,7 +21,16 @@ grep -Fq 'QT_OPENGL=software' "$GUARD"
 grep -Fq 'LIBGL_ALWAYS_SOFTWARE=1' "$GUARD"
 grep -Fq '/tmp/mechos-live-setup.log' "$GUARD"
 grep -Fq '/usr/local/libexec/mechos-live-setup-v5.py' "$GUARD"
+
+grep -Fq 'MECHOS_LIVE_INSTALLER_SAFE_FALLBACK_V1' "$FALLBACK"
+grep -Fq 'MECHOS_LIVE_INSTALLER_CRASH_FALLBACK_V1' "$FALLBACK"
+grep -Fq '/usr/local/bin/mechos-native-install' "$FALLBACK"
+grep -Fq 'mechos-live-update-keep-home' "$FALLBACK"
+grep -Fq 'mechos-alongside-assistant' "$FALLBACK"
+grep -Fq -- '--preserve-home' "$FALLBACK"
+grep -Fq 'coredumpctl info /usr/bin/python3' "$FALLBACK"
 grep -Fq 'mechos-live-installer-runtime-guard.sh' "$PATCHER"
+grep -Fq 'mechos-live-installer-crash-fallback.sh' "$PATCHER"
 
 # The default Clean Install radio button emits toggled immediately when checked.
 # It must be selected only after every widget touched by set_mode() exists.
@@ -43,8 +54,8 @@ print('v5 installer default-mode initialization order passed.')
 PY
 
 # Simulate the same source-patcher chain used by the Build MechOS workflow and
-# require the runtime guard to run after the final installer layout, but before
-# post-install staging is committed and before mkarchiso starts.
+# require the runtime guard/fallback to run after the final installer layout,
+# but before post-install staging is committed and before mkarchiso starts.
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 cp scripts/build-mechos-archiso.sh "$tmp"
@@ -66,18 +77,19 @@ text=Path(sys.argv[1]).read_text(encoding='utf-8')
 items=[
  'mechos-reference-v5-installer-layout.sh',
  'mechos-live-installer-runtime-guard.sh',
+ 'mechos-live-installer-crash-fallback.sh',
  'mechos-reference-v5-postinstall-stage.sh commit',
  'mechos-finalize-install-payload.sh final',
 ]
 pos=[text.find(x) for x in items]
 if any(p < 0 for p in pos):
-    raise SystemExit('Live installer runtime guard build stage is missing')
+    raise SystemExit('Live installer runtime guard/fallback build stage is missing')
 if pos != sorted(pos):
-    raise SystemExit('Live installer runtime guard is in the wrong v5 build order')
+    raise SystemExit('Live installer runtime guard/fallback is in the wrong v5 build order')
 mk=text.rfind('\nmkarchiso -v \\\n')
 if mk < 0 or pos[-1] >= mk:
     raise SystemExit('Live installer finalization no longer happens before mkarchiso')
-print('Live installer runtime guard build-order validation passed.')
+print('Live installer runtime guard/fallback build-order validation passed.')
 PY
 
-echo 'MechOS Live installer runtime guard validation passed.'
+echo 'MechOS Live installer runtime guard/fallback validation passed.'
