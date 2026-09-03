@@ -14,9 +14,25 @@ trap 'rc=$?; printf "[MechOS Auto Optimization] ERROR line %s: %s (exit %s)\n" "
 patch_tree(){
   local tree="$1"
   local public="$tree/usr/local/bin/mechos-performance-center"
-  local perf="$public"
-  [ -f "$public.real" ] && perf="$public.real"
-  [ -f "$perf" ] || fail "Performance Center missing from $tree"
+  local real="$public.real"
+  local perf=""
+
+  # Reference UI v5 can leave both a public Python implementation and an older
+  # .real compatibility target behind. Prefer whichever file actually owns the
+  # final Perf class. Only fall back to .real when the public file is a wrapper.
+  if [ -f "$public" ] && grep -Fq 'class Perf(' "$public"; then
+    perf="$public"
+  elif [ -f "$real" ] && grep -Fq 'class Perf(' "$real"; then
+    perf="$real"
+  elif [ -f "$public" ]; then
+    perf="$public"
+  elif [ -f "$real" ]; then
+    perf="$real"
+  else
+    fail "Performance Center missing from $tree"
+  fi
+
+  log "patching Performance Center implementation: ${perf#$tree}"
 
   python3 - "$perf" <<'PY'
 from pathlib import Path
@@ -25,13 +41,10 @@ import sys
 
 path=Path(sys.argv[1])
 text=path.read_text(encoding='utf-8')
-marker='# MECHOS_AUTO_OPTIMIZATION_V3'
+marker='# MECHOS_AUTO_OPTIMIZATION_V4'
 if marker in text:
     raise SystemExit(0)
 
-# Locate the final Reference-v5 Performance Center actions structurally instead
-# of depending on an exact source string. Layout/theme passes are allowed to
-# change descriptions, whitespace and surrounding widget composition.
 try:
     tree=ast.parse(text,str(path))
 except SyntaxError as exc:
@@ -66,21 +79,15 @@ for label,segment in segments:
     text=text.replace(segment,replacement,1)
 
 if not found_auto:
-    raise SystemExit('[MechOS Auto Optimization] Auto Optimization action not found in final Performance Center UI')
+    raise SystemExit('[MechOS Auto Optimization] Auto Optimization action not found in selected final Performance Center implementation')
 
-cls=text.find('class Perf(QMainWindow):')
+cls=text.find('class Perf(')
 if cls < 0:
     raise SystemExit('[MechOS Auto Optimization] Perf class not found')
 
-helper=r'''# MECHOS_AUTO_OPTIMIZATION_V3
+helper=r'''# MECHOS_AUTO_OPTIMIZATION_V4
 def mechos_auto_optimize(parent):
-    """Apply the best safe runtime profile exposed by the current hardware.
-
-    Virtual machines normally do not expose physical CPU platform profiles, so
-    requesting `performance` unconditionally is an expected limitation there.
-    Select the best profile the machine actually exposes and treat unavailable
-    hardware controls as informational rather than as optimization failures.
-    """
+    """Apply the best safe runtime profile exposed by the current hardware."""
     import re as _re
     import shutil as _shutil
     import subprocess as _sp
@@ -148,7 +155,6 @@ def mechos_auto_optimize(parent):
 
 '''
 text=text[:cls]+helper+text[cls:]
-
 compile(text,str(path),'exec')
 path.write_text(text,encoding='utf-8')
 PY
@@ -156,7 +162,7 @@ PY
   chmod 755 "$perf"
   PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$perf" \
     || fail "Performance Center Python validation failed in $tree"
-  grep -Fq '# MECHOS_AUTO_OPTIMIZATION_V3' "$perf" || fail "auto optimization helper marker missing"
+  grep -Fq '# MECHOS_AUTO_OPTIMIZATION_V4' "$perf" || fail "auto optimization helper marker missing"
   grep -Fq 'lambda:mechos_auto_optimize(self)' "$perf" || fail "Auto Optimization is not wired to hardware-aware helper"
   grep -Fq 'systemd-detect-virt' "$perf" || fail "VM detection missing from Auto Optimization"
 }
@@ -173,4 +179,4 @@ mv -f "$replacement" "$ARCHIVE"
 rm -rf "$tmp"
 trap - EXIT
 
-log 'Auto Optimization is structurally wired to supported physical/VM profiles; unsupported tuning remains informational'
+log 'Auto Optimization is wired to the final Performance Center implementation with VM/hardware-aware profiles'
