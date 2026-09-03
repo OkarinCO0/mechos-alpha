@@ -95,6 +95,75 @@ load_gamescope_gpu() {
 # Hardware diagnostics are useful, but they must not block the visible mode
 # transition. Run them asynchronously while MechScope is already opening.
 text = text.replace("  log_graphics_state\n  load_gamescope_gpu\n", "  log_graphics_state &\n  load_gamescope_gpu\n", 1)
+
+# Gamescope's standalone compositor expects real DRM/KMS/Vulkan hardware.
+# VirtualBox (VMSVGA/VMware SVGA), VMware, QEMU/KVM virtio/QXL and software
+# renderers can crash Gamescope before MechScope appears. Detect those guests
+# and keep the same MechScope UI by launching it directly in the authenticated
+# Plasma session. Physical AMD/Intel/NVIDIA systems continue through Gamescope.
+vm_marker = "# MECHOS_VM_GAMESCOPE_FALLBACK_V1"
+if vm_marker not in text:
+    anchor = text.find("run_mechscope() {")
+    if anchor < 0:
+        raise SystemExit("[MechOS Fast Mode Switch] could not locate run_mechscope() for VM fallback")
+    helper = r'''# MECHOS_VM_GAMESCOPE_FALLBACK_V1
+is_virtual_gpu_environment() {
+  local dmi pci modules
+  dmi="$({
+    cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true
+    cat /sys/class/dmi/id/product_name 2>/dev/null || true
+    cat /sys/class/dmi/id/board_vendor 2>/dev/null || true
+  } | tr '\n' ' ')"
+  pci="$(lspci -nn 2>/dev/null | grep -Ei 'VGA|3D|Display' || true)"
+  modules="$(lsmod 2>/dev/null | awk '{print $1}' | tr '\n' ' ')"
+
+  if printf '%s\n' "$dmi" | grep -Eqi \
+    'virtualbox|vmware|qemu|kvm|bochs|parallels|hyper-v|microsoft corporation.*virtual|innotek'; then
+    printf '[MechOS] Virtual machine detected from DMI: %s\n' "$dmi" >>"$LOG_FILE"
+    return 0
+  fi
+
+  if printf '%s\n' "$pci" | grep -Eqi \
+    'VMware.*SVGA|VirtualBox|Virtio.*GPU|Red Hat.*QXL|Bochs|Hyper-V|Microsoft.*Virtual'; then
+    printf '[MechOS] Virtual GPU detected from PCI: %s\n' "$pci" >>"$LOG_FILE"
+    return 0
+  fi
+
+  if printf '%s\n' "$modules" | grep -Eq \
+    '(^| )(vmwgfx|vboxvideo|virtio_gpu|qxl|bochs_drm)( |$)'; then
+    printf '[MechOS] Virtual graphics kernel driver detected.\n' >>"$LOG_FILE"
+    return 0
+  fi
+
+  return 1
+}
+
+'''
+    text = text[:anchor] + helper + text[anchor:]
+
+    needle = '''  log_graphics_state &
+  load_gamescope_gpu
+  prepare_vendor_environment
+'''
+    replacement = '''  log_graphics_state &
+  load_gamescope_gpu
+
+  if is_virtual_gpu_environment; then
+    clear_vendor_environment
+    export MECHOS_VM_MODE=1
+    export MECHOS_DISABLE_GAMESCOPE=1
+    printf '[MechOS] VM-safe gaming mode: bypassing Gamescope and launching MechScope directly.\\n' >>"$LOG_FILE"
+    run_direct_mechscope
+    return $?
+  fi
+
+  unset MECHOS_VM_MODE 2>/dev/null || true
+  prepare_vendor_environment
+'''
+    if needle not in text:
+        raise SystemExit("[MechOS Fast Mode Switch] could not locate run_mechscope preflight for VM fallback")
+    text = text.replace(needle, replacement, 1)
+
 layer.write_text(text, encoding="utf-8")
 
 text = control.read_text(encoding="utf-8")
@@ -124,6 +193,12 @@ PY
     || fail "GPU transition cache is missing"
   grep -Fq 'log_graphics_state &' "$layer" \
     || fail "graphics diagnostics still block MechScope startup"
+  grep -Fq '# MECHOS_VM_GAMESCOPE_FALLBACK_V1' "$layer" \
+    || fail "VM Gamescope fallback marker is missing"
+  grep -Fq 'VM-safe gaming mode: bypassing Gamescope' "$layer" \
+    || fail "VM-safe direct MechScope fallback is missing"
+  grep -Fq 'vmwgfx|vboxvideo|virtio_gpu|qxl|bochs_drm' "$layer" \
+    || fail "virtual graphics driver detection is missing"
   grep -Fq 'systemctl --user start --no-block "$UNIT"' "$control" \
     || fail "gaming-layer start is still blocking"
   grep -Fq 'systemctl --user stop --no-block "$UNIT"' "$control" \
@@ -146,4 +221,4 @@ mv -f "$replacement" "$ARCHIVE"
 rm -rf "$tmp"
 trap - EXIT
 
-log "Mode transitions optimized: cached GPU selection, async diagnostics, non-blocking user-service handoffs and shorter stop/restart timeouts"
+log "Mode transitions optimized: cached GPU selection, VM-safe Gamescope bypass, async diagnostics, non-blocking user-service handoffs and shorter stop/restart timeouts"
