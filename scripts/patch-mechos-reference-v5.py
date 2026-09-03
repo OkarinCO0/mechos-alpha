@@ -46,6 +46,10 @@ bash /workspace/scripts/mechos-reference-v5-creator-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-compat.sh
 bash /workspace/scripts/mechos-reference-v5-installer-layout.sh
+# Keep-Home Live Update runs against an installed root from the Live image.
+# Repair Pacman 7+ DownloadUser/sandbox prerequisites before its online package
+# refresh and keep a one-invocation chroot-only sandbox fallback available.
+bash /workspace/scripts/mechos-live-update-pacman-sandbox-hotfix.sh
 # Python 3.14/PyQt6 can abort if a Qt toggled callback raises. Initialize the
 # default Clean Install radio with signals blocked and guard future callbacks.
 bash /workspace/scripts/mechos-installer-radio-signal-hotfix.sh
