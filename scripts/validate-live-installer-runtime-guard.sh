@@ -3,8 +3,10 @@ set -euo pipefail
 
 GUARD=scripts/mechos-live-installer-runtime-guard.sh
 PATCHER=scripts/patch-mechos-reference-v5.py
+INSTALLER=scripts/mechos-reference-v5-installer-layout.sh
 
 bash -n "$GUARD"
+bash -n "$INSTALLER"
 python3 -m py_compile "$PATCHER"
 
 grep -Fq 'MECHOS_LIVE_INSTALLER_RUNTIME_IMPORTS_V1' "$GUARD"
@@ -18,6 +20,27 @@ grep -Fq 'LIBGL_ALWAYS_SOFTWARE=1' "$GUARD"
 grep -Fq '/tmp/mechos-live-setup.log' "$GUARD"
 grep -Fq '/usr/local/libexec/mechos-live-setup-v5.py' "$GUARD"
 grep -Fq 'mechos-live-installer-runtime-guard.sh' "$PATCHER"
+
+# The default Clean Install radio button emits toggled immediately when checked.
+# It must be selected only after every widget touched by set_mode() exists.
+python3 - "$INSTALLER" <<'PY'
+from pathlib import Path
+import sys
+text=Path(sys.argv[1]).read_text(encoding='utf-8')
+select=text.find("self.mode_buttons['clean'].setChecked(True)")
+required=[
+    text.find('self.warning_text='),
+    text.find('self.ov_drive='),
+    text.find('self.ov_mode='),
+    text.find('self.ov_partition='),
+    text.find('self.ov_fs='),
+]
+if select < 0 or any(p < 0 for p in required):
+    raise SystemExit('v5 installer default-mode initialization markers are missing')
+if select <= max(required):
+    raise SystemExit('v5 installer selects Clean Install before set_mode target widgets exist')
+print('v5 installer default-mode initialization order passed.')
+PY
 
 # Simulate the same source-patcher chain used by the Build MechOS workflow and
 # require the runtime guard to run after the final installer layout, but before
