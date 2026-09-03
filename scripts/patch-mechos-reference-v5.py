@@ -41,6 +41,7 @@ bash /workspace/scripts/mechos-reference-v5-creator-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-compat.sh
 bash /workspace/scripts/mechos-reference-v5-installer-layout.sh
+bash /workspace/scripts/mechos-live-installer-runtime-guard.sh
 bash /workspace/scripts/mechos-reference-v5-postinstall-stage.sh commit
 bash /workspace/scripts/mechos-finalize-install-payload.sh final
 '''
