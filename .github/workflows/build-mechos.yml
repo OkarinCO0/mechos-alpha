@@ -43,6 +43,7 @@ jobs:
           bash scripts/validate-mechscope-exact-reference.sh
           bash scripts/validate-live-installer-runtime-guard.sh
           bash scripts/validate-live-update-pacman-sandbox.sh
+          bash scripts/validate-aur-helper.sh
           bash scripts/validate-vm-ui-runtime-guard.sh
           bash scripts/validate-vm-shortcut-launch.sh
 
@@ -80,6 +81,7 @@ jobs:
           grep -Fq 'mechos-reference-v5-creator-layout.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-v5-controls-layout.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-v5-controls-compat.sh' scripts/build-mechos-archiso.sh
+          grep -Fq 'mechos-aur-helper-integration.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-v5-installer-layout.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-live-update-pacman-sandbox-hotfix.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-live-installer-runtime-guard.sh' scripts/build-mechos-archiso.sh
