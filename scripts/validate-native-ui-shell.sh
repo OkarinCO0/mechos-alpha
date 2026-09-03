@@ -25,10 +25,14 @@ if grep -Eq '^from PyQt6\.QtWidgets import .*Q(HBox|VBox|Grid)Layout' "$SHELL_SR
   fail "source-owned MechScope shell imports nested Qt layouts"
 fi
 
-grep -Fq 'MECHOS_SOURCE_OWNED_SHELL_V2' "$INTEGRATION" || fail "safe runtime source-shell marker missing"
+grep -Fq 'MECHOS_SOURCE_OWNED_SHELL_V3' "$INTEGRATION" || fail "safe runtime source-shell marker missing"
 grep -Fq 'MechScopeShell' "$INTEGRATION" || fail "runtime does not install MechScopeShell"
 grep -Fq 'MechScope.build_ui=_mechos_native_build_ui' "$INTEGRATION" || fail "safe build_ui runtime override missing"
 grep -Fq 'MechScope.refresh_stats=_mechos_native_refresh_stats' "$INTEGRATION" || fail "safe refresh_stats runtime override missing"
+grep -Fq 'self.showFullScreen()' "$INTEGRATION" || fail "MechScope true fullscreen enforcement missing"
+grep -Fq '_MechQTimer.singleShot(0' "$INTEGRATION" || fail "post-show fullscreen assertion missing"
+grep -Fq '_MechQTimer.singleShot(750' "$INTEGRATION" || fail "late fullscreen assertion missing"
+grep -Fq 'Qt.WindowType.FramelessWindowHint' "$INTEGRATION" || fail "frameless MechScope flag missing"
 if grep -Fq "text=replace_method(text,'build_ui'" "$INTEGRATION"; then
   fail "unsafe generated-class method surgery returned"
 fi
@@ -38,4 +42,4 @@ fi
 
 grep -Fq 'mechos-native-ui-shell-integration.sh' "$PATCHER" || fail "source-owned shell is not wired as final Reference v5 authority"
 
-echo '[validate-native-ui-shell] OK: source-owned fixed-composition MechScope shell uses safe runtime overrides'
+echo '[validate-native-ui-shell] OK: source-owned MechScope shell uses safe runtime overrides and true fullscreen startup'
