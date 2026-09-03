@@ -29,9 +29,9 @@ if late < 0:
 insert = '''
 
 # MECHOS_REFERENCE_UI_V5_FINAL
-# The approved visual reference is the last UI authority. Creator Mode and
+# The approved visual reference is the last legacy UI pass. Creator Mode and
 # Quick Actions remain post-install-only: they are temporarily materialized
-# from the install payload for v5 patching, captured back into the payload, and
+# from the install payload for patching, captured back into the payload, and
 # removed from Live before mkarchiso.
 bash /workspace/scripts/mechos-reference-v5-postinstall-stage.sh prepare
 bash /workspace/scripts/mechos-reference-v5-integration.sh final
@@ -74,6 +74,13 @@ bash /workspace/scripts/mechos-native-ui-shell-integration.sh
 # a physical `performance` power profile exists; VirtualBox and some real
 # hardware expose only balanced or no platform profile at all.
 bash /workspace/scripts/mechos-auto-optimization-hotfix.sh
+# FINAL SYSTEM UI AUTHORITY. Creator Mode, Quick Actions, Performance Center,
+# Update Center and Recovery Center now use repository-owned visual modules that
+# match the approved MechOS mockups. Legacy layouts remain backend-only.
+bash /workspace/scripts/mechos-source-owned-system-ui.sh
+# FINAL BOOT SPLASH AUTHORITY. Use the approved reference artwork directly in
+# Plymouth instead of reconstructing it from the older logo/text animation.
+bash /workspace/scripts/mechos-reference-splash-integration.sh
 bash /workspace/scripts/mechos-reference-v5-postinstall-stage.sh commit
 bash /workspace/scripts/mechos-finalize-install-payload.sh final
 '''
