@@ -53,6 +53,10 @@ bash /workspace/scripts/mechos-live-installer-crash-fallback.sh
 # by reference styling. Creator Mode is temporarily staged at this point, so
 # the VM-safe code is captured back into the post-install payload below.
 bash /workspace/scripts/mechos-vm-ui-runtime-guard.sh
+# Desktop and application-menu mode shortcuts share one entrypoint. It imports
+# the active graphical environment into systemd --user and applies VM-only
+# rendering/Gamescope flags before the persistent mode service is started.
+bash /workspace/scripts/mechos-vm-shortcut-launch-hotfix.sh
 bash /workspace/scripts/mechos-reference-v5-postinstall-stage.sh commit
 bash /workspace/scripts/mechos-finalize-install-payload.sh final
 '''
