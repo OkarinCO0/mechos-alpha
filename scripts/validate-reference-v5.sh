@@ -2,6 +2,7 @@
 set -euo pipefail
 
 V5_SCRIPTS=(
+  scripts/mechos-reference-v5-postinstall-stage.sh
   scripts/mechos-reference-v5-integration.sh
   scripts/mechos-reference-v5-store-layout.sh
   scripts/mechos-reference-v5-mechscope-layout.sh
@@ -31,7 +32,9 @@ bash scripts/patch-mechos-live-autologin-partitionmanager.sh "$TMP_BUILDER"
 python3 scripts/patch-mechos-reference-v5.py "$TMP_BUILDER"
 bash -n "$TMP_BUILDER"
 test "$(grep -c '^# MECHOS_REFERENCE_UI_V5_FINAL$' "$TMP_BUILDER")" -eq 1
+grep -Fq 'mechos-reference-v5-postinstall-stage.sh prepare' "$TMP_BUILDER"
 grep -Fq 'mechos-reference-v5-integration.sh final' "$TMP_BUILDER"
+grep -Fq 'mechos-reference-v5-postinstall-stage.sh commit' "$TMP_BUILDER"
 grep -Fq 'mechos-finalize-install-payload.sh final' "$TMP_BUILDER"
 python3 - "$TMP_BUILDER" <<'PY'
 from pathlib import Path
@@ -41,17 +44,25 @@ v5=text.rfind('# MECHOS_REFERENCE_UI_V5_FINAL')
 mk=text.rfind('\nmkarchiso -v \\\n')
 if v5 < 0 or mk < 0 or v5 >= mk:
     raise SystemExit('Reference UI v5 is not immediately upstream of the final ArchISO build stage')
-for required in (
+required=(
+    'mechos-reference-v5-postinstall-stage.sh prepare',
     'mechos-reference-v5-store-layout.sh',
     'mechos-reference-v5-mechscope-layout.sh',
     'mechos-reference-v5-creator-layout.sh',
     'mechos-reference-v5-controls-layout.sh',
     'mechos-reference-v5-controls-compat.sh',
     'mechos-reference-v5-installer-layout.sh',
+    'mechos-reference-v5-postinstall-stage.sh commit',
     'mechos-finalize-install-payload.sh final',
-):
-    if text.find(required, v5, mk) < 0:
-        raise SystemExit(f'missing final v5 build stage: {required}')
+)
+positions=[]
+for item in required:
+    p=text.find(item,v5,mk)
+    if p < 0:
+        raise SystemExit(f'missing final v5 build stage: {item}')
+    positions.append(p)
+if positions != sorted(positions):
+    raise SystemExit('Reference UI v5 post-install staging order is incorrect')
 print('Reference UI v5 cumulative patch-chain simulation passed.')
 PY
 
@@ -77,6 +88,11 @@ for name in scripts:
         compile(block,f'{name}:PY{i}','exec')
 print('Reference UI v5 embedded Python syntax passed.')
 PY
+
+grep -Fq 'POSTINSTALL_SURFACES' scripts/mechos-reference-v5-postinstall-stage.sh
+grep -Fq 'mechos-creator-mode' scripts/mechos-reference-v5-postinstall-stage.sh
+grep -Fq 'mechos-quick-actions' scripts/mechos-reference-v5-postinstall-stage.sh
+grep -Fq 'removed temporary Live copy' scripts/mechos-reference-v5-postinstall-stage.sh
 
 grep -Fq 'MECHOS_REFERENCE_UI_V5' scripts/mechos-reference-v5-integration.sh
 grep -Fq 'Reference UI v5 applied as final Live UI authority' scripts/mechos-reference-v5-integration.sh
@@ -120,9 +136,14 @@ grep -Fq 'mechos-live-update-keep-home' scripts/mechos-reference-v5-installer-la
 grep -Fq 'mechos-alongside-assistant' scripts/mechos-reference-v5-installer-layout.sh
 grep -Fq -- '--preserve-home' scripts/mechos-reference-v5-installer-layout.sh
 
+grep -Fq 'POSTINSTALL_STAGE' scripts/mechos-finalize-install-payload.sh
+grep -Fq 'MECHOS_REFERENCE_CREATOR_V5' scripts/mechos-finalize-install-payload.sh
+grep -Fq 'MECHOS_REFERENCE_QUICK_ACTIONS_V5' scripts/mechos-finalize-install-payload.sh
 grep -Fq 'mechos-rootfs.tar.zst' scripts/mechos-finalize-install-payload.sh
 grep -Fq 'reference-ui-v5.json' scripts/mechos-finalize-install-payload.sh
 grep -Fq 'MECHOS_REFERENCE_UI_V5_FINAL' scripts/patch-mechos-reference-v5.py
+grep -Fq 'mechos-reference-v5-postinstall-stage.sh prepare' scripts/patch-mechos-reference-v5.py
+grep -Fq 'mechos-reference-v5-postinstall-stage.sh commit' scripts/patch-mechos-reference-v5.py
 grep -Fq 'mechos-reference-v5-store-layout.sh' scripts/patch-mechos-reference-v5.py
 grep -Fq 'mechos-reference-v5-mechscope-layout.sh' scripts/patch-mechos-reference-v5.py
 grep -Fq 'mechos-reference-v5-creator-layout.sh' scripts/patch-mechos-reference-v5.py
