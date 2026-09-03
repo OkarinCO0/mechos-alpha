@@ -42,6 +42,10 @@ bash /workspace/scripts/mechos-reference-v5-controls-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-compat.sh
 bash /workspace/scripts/mechos-reference-v5-installer-layout.sh
 bash /workspace/scripts/mechos-live-installer-runtime-guard.sh
+# VM behavior is applied after the final UI layouts so it cannot be overwritten
+# by reference styling. Creator Mode is temporarily staged at this point, so
+# the VM-safe code is captured back into the post-install payload below.
+bash /workspace/scripts/mechos-vm-ui-runtime-guard.sh
 bash /workspace/scripts/mechos-reference-v5-postinstall-stage.sh commit
 bash /workspace/scripts/mechos-finalize-install-payload.sh final
 '''
