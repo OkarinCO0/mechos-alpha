@@ -106,7 +106,6 @@ replacement=r'''class Installer(QMainWindow):
         self.custom=self.install_card('custom','Custom Install','Choose what to install and configure partitions.','For advanced users who want full control.')
         self.alongside=self.install_card('alongside','Install Alongside Existing OS','Guided dual-boot planning for an existing Windows/Linux system.','Disk changes remain visible and manually confirmed.')
         for card in (self.clean,self.keep,self.custom,self.alongside): ol.addWidget(card)
-        self.mode_buttons['clean'].setChecked(True)
         info=self.panel(); il=QHBoxLayout(info); il.addWidget(QLabel('ⓘ')); self.warning_text=self.muted('Clean Install erases only the selected whole disk after a final MechOS confirmation.'); il.addWidget(self.warning_text,1); ol.addWidget(info)
         center.addWidget(options,1); body.addLayout(center,5)
 
@@ -125,6 +124,11 @@ replacement=r'''class Installer(QMainWindow):
         footer=QHBoxLayout(); hint=QLabel('A / Enter  Select     B / Esc  Back     D-Pad / Arrows  Navigate'); hint.setObjectName('muted'); footer.addWidget(hint); footer.addStretch()
         repair=QPushButton('Repair\nFix boot or system issues'); repair.clicked.connect(self.recovery); footer.addWidget(repair)
         install=QPushButton('Install Now\nStart installation'); install.setObjectName('primary'); install.clicked.connect(self.install); footer.addWidget(install); outer.addLayout(footer)
+
+        # Do not select the default radio button until every widget touched by
+        # set_mode() exists. Selecting it earlier fires the Qt toggled signal
+        # during build_ui() and can abort PyQt before the installer is shown.
+        self.mode_buttons['clean'].setChecked(True)
         self.refresh_target_labels()
 
     def install_card(self,mode,title,desc,detail):
