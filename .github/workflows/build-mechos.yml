@@ -69,6 +69,7 @@ jobs:
           grep -Fq 'mechos-radarai-performance-integration.sh final' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-surfaces-v4-integration.sh final' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-v5-integration.sh final' scripts/build-mechos-archiso.sh
+          grep -Fq 'mechos-reference-v5-store-layout.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-finalize-install-payload.sh final' scripts/build-mechos-archiso.sh
           grep -qxF 'partitionmanager' scripts/build-mechos-archiso.sh
           grep -Fq 'kdialog partitionmanager firefox' scripts/build-mechos-archiso.sh
