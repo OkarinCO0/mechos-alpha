@@ -15,11 +15,12 @@ needle = 'bash /workspace/scripts/mechos-current-integration.sh final\n\nmkarchi
 insert = '''bash /workspace/scripts/mechos-current-integration.sh final
 
 # MECHOS_REFERENCE_UI_V5_FINAL
-# The approved visual reference is the last UI authority. Final Store, Creator,
-# control-center and Installer layouts run after all older patch layers, then
-# the finished runtime is repacked so post-install and Live receive the same UI.
+# The approved visual reference is the last UI authority. Final Store, MechScope,
+# Creator, control-center and Installer layouts run after all older patch layers,
+# then the finished runtime is repacked so post-install and Live receive the same UI.
 bash /workspace/scripts/mechos-reference-v5-integration.sh final
 bash /workspace/scripts/mechos-reference-v5-store-layout.sh
+bash /workspace/scripts/mechos-reference-v5-mechscope-layout.sh
 bash /workspace/scripts/mechos-reference-v5-creator-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-compat.sh
