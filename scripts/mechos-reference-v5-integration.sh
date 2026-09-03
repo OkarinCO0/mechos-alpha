@@ -14,13 +14,36 @@ trap 'rc=$?; printf "[MechOS Reference UI v5] ERROR: line %s failed: %s (exit %s
 [ -d "$ROOT" ] || fail "ArchISO rootfs is missing: $ROOT"
 mkdir -p "$THEME_DIR" "$BRAND_DIR"
 
-# Final visual token set. This is intentionally applied after Store v3,
-# Surfaces v4, RadarAI, RGB and the cumulative current integration so older
-# generators cannot restore the utility-style layouts.
+# Resolve the implementation behind MechOS launch wrappers. Several late
+# integrations intentionally keep a small launcher at NAME and move the PyQt
+# implementation to NAME.real. Reference v5 must style and validate the real
+# implementation rather than grepping the wrapper text.
+surface_impl() {
+  local name="$1"
+  local real="$ROOT/usr/local/bin/$name.real"
+  local base="$ROOT/usr/local/bin/$name"
+  if [ -f "$real" ]; then
+    printf '%s\n' "$real"
+    return 0
+  fi
+  if [ -f "$base" ]; then
+    printf '%s\n' "$base"
+    return 0
+  fi
+  return 1
+}
+
+required_surface() {
+  local name="$1"
+  local target
+  target="$(surface_impl "$name" || true)"
+  [ -n "$target" ] || fail "required reference surface missing: $ROOT/usr/local/bin/$name{,.real}"
+  printf '%s\n' "$target"
+}
+
+# Final visual token set shared by every MechOS-owned PyQt surface.
 cat > "$THEME_DIR/reference-v5.qss" <<'QSS'
-/* MECHOS_REFERENCE_UI_V5
- * Final visual authority for the approved MechOS reference screens.
- */
+/* MECHOS_REFERENCE_UI_V5 */
 QMainWindow,QDialog,QWidget {
   color:#f7f9ff;
   background:#030611;
@@ -34,7 +57,6 @@ QLabel#title,QLabel#heroTitle,QLabel#surfaceTitle { color:#ffffff; font-size:34p
 QLabel#section,QLabel#surfaceSection { color:#48dfff; font-size:13px; font-weight:900; }
 QLabel#muted,QLabel#body,QLabel#sub,QLabel#surfaceMuted { color:#9cacbf; }
 QLabel#metric,QLabel#surfaceMetric { color:#ffffff; font-size:24px; font-weight:900; }
-
 QFrame#top,QFrame#header,QFrame#bottom {
   background:#060915; border:1px solid #20284a; border-radius:12px;
 }
@@ -88,8 +110,7 @@ QMenu::item:selected { background:#34245f; }
 QToolTip { background:#101a2e; color:white; border:1px solid #8e65df; padding:6px; }
 QSS
 
-# Procedural hero art matching the approved purple/blue MechOS command-center
-# references without bundling third-party game artwork.
+# Procedural MechOS hero art; no commercial game artwork is bundled.
 cat > "$BRAND_DIR/reference-hero-v5.svg" <<'SVG'
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="420" viewBox="0 0 1600 420">
  <defs>
@@ -151,17 +172,13 @@ if marker not in text:
     text=''.join(lines)
 
 expr="(__import__('pathlib').Path('/usr/share/mechos/theme/reference-v5.qss').read_text(encoding='utf-8') if __import__('pathlib').Path('/usr/share/mechos/theme/reference-v5.qss').is_file() else '')"
-# Preserve each screen's layout/backend and layer the final reference stylesheet
-# at QApplication level so older local QSS cannot erase v5 focus/card styling.
 pat=re.compile(r'(?m)^(\s*)(\w+)\s*=\s*QApplication\(sys\.argv\)\s*$')
 m=pat.search(text)
 if m and 'reference-v5.qss' not in text:
     ins=m.group(0)+f"\n{m.group(1)}{m.group(2)}.setStyleSheet({expr})"
     text=text[:m.start()]+ins+text[m.end():]
 
-# The approved reference uses large command-center surfaces. Core MechOS-owned
-# screens should fill the available session in both physical and VM fallback.
-name=p.name
+name=p.name.removesuffix('.real')
 if name in {'mechscope','mechos-creator-mode','mechos-performance-center','mechos-update-center','mechos-recovery-center','mechos-live-setup'}:
     text=re.sub(r'(?m)^(\s*)(w|win)\.show\(\)\s*$', r'\1\2.showMaximized()', text)
 
@@ -170,9 +187,7 @@ PY
   PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$file" || fail "Python syntax failed after v5 styling: $file"
 }
 
-# Final surface list. Creator Store lives inside Creator Mode; Unified Store is
-# inside MechScope, so their parent scripts receive v5 after Store v3 did its
-# functional page replacement.
+# Apply styling to the implementation, not a launcher wrapper.
 for name in \
   mechscope \
   mechos-creator-mode \
@@ -184,39 +199,39 @@ for name in \
   mechos-oobe \
   mechos-stream-center
 do
-  if [ -f "$ROOT/usr/local/bin/$name.real" ]; then
-    patch_pyqt_surface "$ROOT/usr/local/bin/$name.real"
-  else
-    patch_pyqt_surface "$ROOT/usr/local/bin/$name"
-  fi
+  target="$(surface_impl "$name" || true)"
+  [ -n "$target" ] && patch_pyqt_surface "$target"
 done
 
-# Functional contracts behind the pictured screens. The UI must never expose a
-# dead reference-only button; required backend launchers/helpers are validated.
-for f in \
-  "$ROOT/usr/local/bin/mechscope" \
-  "$ROOT/usr/local/bin/mechos-performance-center" \
-  "$ROOT/usr/local/bin/mechos-update-center" \
-  "$ROOT/usr/local/bin/mechos-quick-actions" \
-  "$ROOT/usr/local/bin/mechos-recovery-center" \
-  "$ROOT/usr/local/bin/mechos-live-setup"
-do
-  [ -f "$f" ] || fail "required reference surface missing: $f"
-done
+# Functional contracts behind the pictured screens. Resolve wrappers before
+# validating so a launcher can remain minimal while its .real implementation
+# contains the actual UI and backend actions.
+MECHSCOPE="$(required_surface mechscope)"
+PERF="$(required_surface mechos-performance-center)"
+UPDATE="$(required_surface mechos-update-center)"
+QUICK="$(required_surface mechos-quick-actions)"
+RECOVERY="$(required_surface mechos-recovery-center)"
+INSTALLER="$(required_surface mechos-live-setup)"
 
-# Required commands visible in the approved references.
-grep -Fq 'Unified Store' "$ROOT/usr/local/bin/mechscope" || fail "MechScope lost Unified Store"
-grep -Fq 'Performance Center' "$ROOT/usr/local/bin/mechscope" || fail "MechScope lost Performance Center"
-grep -Fq 'Creator Mode' "$ROOT/usr/local/bin/mechscope" || fail "MechScope lost Creator Mode"
-grep -Fq 'Steam' "$ROOT/usr/local/bin/mechscope" || fail "MechScope lost Steam launcher"
-grep -Fq 'powerprofilesctl' "$ROOT/usr/local/bin/mechos-performance-center" || fail "Performance Center lost real power profiles"
-grep -Eq 'checkupdates|mechos-update-helper' "$ROOT/usr/local/bin/mechos-update-center" || fail "Update Center lost real update backend"
-grep -Eq 'wpctl|nmcli' "$ROOT/usr/local/bin/mechos-quick-actions" || fail "Quick Actions lost real device controls"
-grep -Fq 'repair-boot' "$ROOT/usr/local/bin/mechos-recovery-center" || fail "Recovery Center lost boot repair"
-grep -Fq 'QButtonGroup' "$ROOT/usr/local/bin/mechos-live-setup" || fail "Installer install-mode exclusivity is missing"
+log "resolved MechScope implementation: ${MECHSCOPE#$ROOT}"
+log "resolved Performance implementation: ${PERF#$ROOT}"
+log "resolved Update implementation: ${UPDATE#$ROOT}"
+log "resolved Quick Actions implementation: ${QUICK#$ROOT}"
+log "resolved Recovery implementation: ${RECOVERY#$ROOT}"
+log "resolved Installer implementation: ${INSTALLER#$ROOT}"
 
-# Keep Plasma fast: the reference look remains, but input is not allowed to
-# queue behind fades/pop-up animations.
+grep -Fq 'Unified Store' "$MECHSCOPE" || fail "MechScope lost Unified Store"
+grep -Fq 'Performance Center' "$MECHSCOPE" || fail "MechScope lost Performance Center"
+grep -Fq 'Creator Mode' "$MECHSCOPE" || fail "MechScope lost Creator Mode"
+grep -Fq 'Steam' "$MECHSCOPE" || fail "MechScope lost Steam launcher"
+grep -Fq 'powerprofilesctl' "$PERF" || fail "Performance Center lost real power profiles"
+grep -Eq 'checkupdates|mechos-update-helper' "$UPDATE" || fail "Update Center lost real update backend"
+grep -Eq 'wpctl|nmcli' "$QUICK" || fail "Quick Actions lost real device controls"
+grep -Fq 'repair-boot' "$RECOVERY" || fail "Recovery Center lost boot repair"
+grep -Fq 'QButtonGroup' "$INSTALLER" || fail "Installer install-mode exclusivity is missing"
+
+# Keep Plasma fast: retain the reference look without queueing input behind
+# fades or popup animations.
 mkdir -p "$ROOT/etc/xdg"
 cat > "$ROOT/etc/xdg/kdeglobals" <<'EOF'
 # MECHOS_REFERENCE_UI_V5 low-latency Plasma defaults
