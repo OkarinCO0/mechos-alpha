@@ -32,6 +32,7 @@ if marker in text:
 require("class Installer(QMainWindow):" in text, "Installer class was not found")
 require("QScrollArea" in text, "QScrollArea import is missing")
 require("QSizePolicy" in text, "QSizePolicy import is missing")
+require("QButtonGroup" in text, "QButtonGroup import is missing")
 
 start = text.index("class Installer(QMainWindow):")
 end = text.find("\nclass ", start + 1)
@@ -106,10 +107,45 @@ block = block.replace(
     1,
 )
 
-# The important part of the fix: do not let Qt squeeze all three columns below
-# their useful widths. Put the main body in a borderless scroll area. At normal
-# 1080p resolutions it expands naturally; at lower resolution or high scaling,
-# scrollbars appear instead of cards/text/buttons being crushed together.
+# The install-mode radio buttons are each placed inside their own visual panel.
+# QRadioButton's default auto-exclusive behavior only applies to sibling radio
+# buttons with the same parent, so the panels accidentally allowed Clean/Keep/
+# Custom/Alongside to all remain checked. Bind them to one explicit exclusive
+# QButtonGroup instead. Clean Install stays the single default selection.
+install_group_marker = "# MECHOS_INSTALL_MODE_EXCLUSIVE_GROUP_V1"
+if install_group_marker not in block:
+    alongside_hook = '        self.alongside.toggled.connect(lambda v: self.set_mode("alongside", v))\n'
+    custom_hook = '        self.custom.toggled.connect(lambda v: self.set_mode("custom", v))\n'
+
+    if alongside_hook in block:
+        group_code = (
+            alongside_hook
+            + "        # MECHOS_INSTALL_MODE_EXCLUSIVE_GROUP_V1\n"
+            + "        self.install_mode_group = QButtonGroup(self)\n"
+            + "        self.install_mode_group.setExclusive(True)\n"
+            + "        for button in (self.clean, self.keep, self.custom, self.alongside):\n"
+            + "            self.install_mode_group.addButton(button)\n"
+            + "        self.clean.setChecked(True)\n"
+        )
+        block = block.replace(alongside_hook, group_code, 1)
+    else:
+        require(custom_hook in block, "installer mode toggle hooks were not found")
+        group_code = (
+            custom_hook
+            + "        # MECHOS_INSTALL_MODE_EXCLUSIVE_GROUP_V1\n"
+            + "        self.install_mode_group = QButtonGroup(self)\n"
+            + "        self.install_mode_group.setExclusive(True)\n"
+            + "        for button in (self.clean, self.keep, self.custom):\n"
+            + "            self.install_mode_group.addButton(button)\n"
+            + "        self.clean.setChecked(True)\n"
+        )
+        block = block.replace(custom_hook, group_code, 1)
+
+# The important part of the responsive fix: do not let Qt squeeze all three
+# columns below their useful widths. Put the main body in a borderless scroll
+# area. At normal 1080p resolutions it expands naturally; at lower resolution
+# or high scaling, scrollbars appear instead of cards/text/buttons being
+# crushed together.
 body_anchor = "        layout.addLayout(body, 1)\n\n        # Footer actions\n"
 require(body_anchor in block, "installer body/footer anchor was not found")
 body_replacement = '''        body_widget = QWidget()\n        body_widget.setObjectName("installerBody")\n        body_widget.setLayout(body)\n        body_widget.setMinimumWidth(1250)\n        body_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)\n\n        body_scroll = QScrollArea()\n        body_scroll.setObjectName("installerBodyScroll")\n        body_scroll.setFrameShape(QFrame.Shape.NoFrame)\n        body_scroll.setWidgetResizable(True)\n        body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)\n        body_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)\n        body_scroll.setStyleSheet("QScrollArea#installerBodyScroll { border:0; background:transparent; } QWidget#installerBody { background:transparent; }")\n        body_scroll.setWidget(body_widget)\n        layout.addWidget(body_scroll, 1)\n\n        # Footer actions\n'''
@@ -132,6 +168,10 @@ PY
 python3 -m py_compile "$TARGET" || fail "Live installer Python syntax validation failed"
 grep -Fq '# MECHOS_INSTALLER_RESPONSIVE_LAYOUT_V1' "$TARGET" \
   || fail "responsive installer layout marker is missing"
+grep -Fq '# MECHOS_INSTALL_MODE_EXCLUSIVE_GROUP_V1' "$TARGET" \
+  || fail "exclusive install-mode radio group is missing"
+grep -Fq 'self.install_mode_group.setExclusive(True)' "$TARGET" \
+  || fail "install-mode radio group is not exclusive"
 grep -Fq 'body_widget.setMinimumWidth(1250)' "$TARGET" \
   || fail "installer anti-squish body width guard is missing"
 grep -Fq 'body_scroll.setHorizontalScrollBarPolicy' "$TARGET" \
@@ -141,4 +181,4 @@ grep -Fq 'nav_panel.setMinimumWidth(245)' "$TARGET" \
 grep -Fq 'hw_panel.setMinimumWidth(320)' "$TARGET" \
   || fail "installer hardware summary width guard is missing"
 
-log "Live installer layout spacing and responsive anti-squish behavior applied"
+log "Live installer layout spacing, responsive anti-squish behavior and exclusive install-mode selection applied"
