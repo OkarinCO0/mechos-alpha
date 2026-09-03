@@ -236,22 +236,34 @@ import sys
 p=Path(sys.argv[1]); text=p.read_text(encoding='utf-8')
 marker='# MECHOS_AUR_UPDATE_CENTER_V1'
 if marker not in text:
-    anchor='self.update_button.setEnabled(False); row.addWidget(self.update_button); copy.addLayout(row); hl.addLayout(copy,3)'
-    if anchor in text:
-        replacement='''self.update_button.setEnabled(False); row.addWidget(self.update_button)
-        # MECHOS_AUR_UPDATE_CENTER_V1
-        self.aur_button=QPushButton("AUR Packages"); self.aur_button.clicked.connect(lambda: subprocess.Popen(["/usr/local/bin/mechos-aur-gui"])); row.addWidget(self.aur_button)
-        copy.addLayout(row); hl.addLayout(copy,3)'''
-        text=text.replace(anchor,replacement,1)
-    else:
-        # Older layout fallback: insert immediately after the first Install Updates button declaration.
-        anchor='self.update_button=QPushButton("Install Updates")'
+    # Reference v5 stores Install Updates in the UPDATE PROGRESS panel with
+    # pl.addWidget(self.update_button). Older layouts used row.addWidget().
+    # Hook the widget-add line rather than matching the whole declaration so
+    # harmless layout changes do not break the ISO build again.
+    anchors=(
+        'pl.addWidget(self.update_button)',
+        'row.addWidget(self.update_button)',
+    )
+    inserted=False
+    for anchor in anchors:
         pos=text.find(anchor)
         if pos < 0:
-            raise SystemExit('Update Center install button not found')
+            continue
         end=text.find('\n',pos)
-        addition='\n        # MECHOS_AUR_UPDATE_CENTER_V1\n        self.aur_button=QPushButton("AUR Packages"); self.aur_button.clicked.connect(lambda: subprocess.Popen(["/usr/local/bin/mechos-aur-gui"]))\n'
+        if end < 0:
+            end=len(text)
+        addition='''\n        # MECHOS_AUR_UPDATE_CENTER_V1
+        self.aur_button=QPushButton("AUR Packages")
+        self.aur_button.clicked.connect(lambda:spawn(["/usr/local/bin/mechos-aur-gui"]))
+        pl.addWidget(self.aur_button)'''
+        # Older row-based layouts need their own layout object.
+        if anchor.startswith('row.'):
+            addition=addition.replace('pl.addWidget(self.aur_button)','row.addWidget(self.aur_button)')
         text=text[:end]+addition+text[end:]
+        inserted=True
+        break
+    if not inserted:
+        raise SystemExit('Update Center Install Updates widget placement not found')
     p.write_text(text,encoding='utf-8')
 PY
   fi
@@ -262,6 +274,7 @@ PY
   grep -Fq 'PKGBUILD review is required' "$bin/mechos-aur" || fail "PKGBUILD review guard missing"
   grep -Fq 'Do not run mechos-aur as root' "$bin/mechos-aur" || fail "root build guard missing"
   grep -Fq 'makepkg -si --needed' "$bin/mechos-aur" || fail "makepkg install path missing"
+  [ ! -f "$update" ] || grep -Fq '# MECHOS_AUR_UPDATE_CENTER_V1' "$update" || fail "AUR Update Center button was not injected"
 }
 
 patch_tree "$ROOT"
