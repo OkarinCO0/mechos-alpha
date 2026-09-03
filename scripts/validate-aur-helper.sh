@@ -17,6 +17,8 @@ grep -Fq 'https://aur.archlinux.org/rpc/v5' "$SRC" || fail "AUR RPC search/info 
 grep -Fq 'https://aur.archlinux.org' "$SRC" || fail "AUR git source missing"
 grep -Fq 'MechOS AUR Packages' "$SRC" || fail "AUR GUI/desktop entry missing"
 grep -Fq 'MECHOS_AUR_UPDATE_CENTER_V1' "$SRC" || fail "Update Center integration marker missing"
+grep -Fq 'pl.addWidget(self.update_button)' "$SRC" || fail "Reference v5 Update Center anchor missing"
+grep -Fq 'spawn([\"/usr/local/bin/mechos-aur-gui\"])' "$SRC" || fail "AUR Update Center launch path missing"
 grep -Fq 'mechos-aur-helper-integration.sh' "$PATCHER" || fail "AUR helper is not wired into final v5 build"
 
 TMP="$(mktemp -d)"
@@ -37,11 +39,35 @@ def extract(start,end,name):
 
 aur=extract("cat > \"$bin/mechos-aur\" <<'EOF'\n","\nEOF\n",'mechos-aur')
 gui=extract("cat > \"$bin/mechos-aur-gui\" <<'PY'\n","\nPY\n",'mechos-aur-gui')
+update_patch=extract("  if [ -f \"$update\" ]; then\n    python3 - \"$update\" <<'PY'\n","\nPY\n  fi\n",'Update Center AUR patch')
 (out/'mechos-aur').write_text(aur,encoding='utf-8')
 (out/'mechos-aur-gui.py').write_text(gui,encoding='utf-8')
+(out/'patch-update.py').write_text(update_patch,encoding='utf-8')
 PY
 bash -n "$TMP/mechos-aur" || fail "generated mechos-aur shell syntax failed"
 PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$TMP/mechos-aur-gui.py" || fail "generated AUR GUI Python syntax failed"
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$TMP/patch-update.py" || fail "Update Center patch Python syntax failed"
+
+# Reproduce the exact Reference v5 Update Center structure that broke the ISO
+# build: Install Updates is placed into the UPDATE PROGRESS panel with `pl`.
+cat > "$TMP/mechos-update-center" <<'PY'
+#!/usr/bin/env python3
+class UpdateCenter:
+    def build_ui(self):
+        lower=object()
+        prog=self.panel()
+        pl=QVBoxLayout(prog)
+        self.progress=QProgressBar()
+        pl.addWidget(self.progress)
+        self.update_button=QPushButton('Install Updates'); self.update_button.setObjectName('primary'); self.update_button.clicked.connect(self.apply_updates); self.update_button.setEnabled(False); pl.addWidget(self.update_button)
+        self.reboot_button=QPushButton('Schedule / Restart MechOS')
+PY
+python3 "$TMP/patch-update.py" "$TMP/mechos-update-center" || fail "AUR patch rejected Reference v5 Update Center"
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$TMP/mechos-update-center" || fail "patched Reference v5 Update Center is not valid Python"
+grep -Fq '# MECHOS_AUR_UPDATE_CENTER_V1' "$TMP/mechos-update-center" || fail "AUR marker was not injected into Reference v5 Update Center"
+grep -Fq 'self.aur_button=QPushButton("AUR Packages")' "$TMP/mechos-update-center" || fail "AUR Packages button was not injected"
+grep -Fq 'spawn(["/usr/local/bin/mechos-aur-gui"])' "$TMP/mechos-update-center" || fail "AUR Packages button launch command is wrong"
+grep -Fq 'pl.addWidget(self.aur_button)' "$TMP/mechos-update-center" || fail "AUR button is not attached to the Reference v5 progress panel"
 
 python3 - <<'PY'
 from pathlib import Path
