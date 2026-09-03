@@ -42,6 +42,10 @@ bash /workspace/scripts/mechos-reference-v5-controls-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-compat.sh
 bash /workspace/scripts/mechos-reference-v5-installer-layout.sh
 bash /workspace/scripts/mechos-live-installer-runtime-guard.sh
+# The reference installer remains the normal UI. If it terminates abnormally,
+# keep the Live environment installable through a separately confirmed safe
+# fallback that uses the same native MechOS install backends.
+bash /workspace/scripts/mechos-live-installer-crash-fallback.sh
 # VM behavior is applied after the final UI layouts so it cannot be overwritten
 # by reference styling. Creator Mode is temporarily staged at this point, so
 # the VM-safe code is captured back into the post-install payload below.
