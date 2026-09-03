@@ -2,11 +2,13 @@
 set -euo pipefail
 
 GUARD=scripts/mechos-live-installer-runtime-guard.sh
+RADIO=scripts/mechos-installer-radio-signal-hotfix.sh
 FALLBACK=scripts/mechos-live-installer-crash-fallback.sh
 PATCHER=scripts/patch-mechos-reference-v5.py
 INSTALLER=scripts/mechos-reference-v5-installer-layout.sh
 
 bash -n "$GUARD"
+bash -n "$RADIO"
 bash -n "$FALLBACK"
 bash -n "$INSTALLER"
 python3 -m py_compile "$PATCHER"
@@ -22,6 +24,15 @@ grep -Fq 'LIBGL_ALWAYS_SOFTWARE=1' "$GUARD"
 grep -Fq '/tmp/mechos-live-setup.log' "$GUARD"
 grep -Fq '/usr/local/libexec/mechos-live-setup-v5.py' "$GUARD"
 
+grep -Fq 'MECHOS_INSTALLER_RADIO_SIGNAL_GUARD_V1' "$RADIO"
+grep -Fq "default_button.blockSignals(True)" "$RADIO"
+grep -Fq "default_button.setChecked(True)" "$RADIO"
+grep -Fq "default_button.blockSignals(False)" "$RADIO"
+grep -Fq 'def mode_toggled(self,mode,checked):' "$RADIO"
+grep -Fq 'except Exception as exc:' "$RADIO"
+grep -Fq 'self.mode_checks[mode]=check' "$RADIO"
+grep -Fq 'for m,c in self.mode_checks.items()' "$RADIO"
+
 grep -Fq 'MECHOS_LIVE_INSTALLER_SAFE_FALLBACK_V1' "$FALLBACK"
 grep -Fq 'MECHOS_LIVE_INSTALLER_CRASH_FALLBACK_V1' "$FALLBACK"
 grep -Fq '/usr/local/bin/mechos-native-install' "$FALLBACK"
@@ -29,11 +40,13 @@ grep -Fq 'mechos-live-update-keep-home' "$FALLBACK"
 grep -Fq 'mechos-alongside-assistant' "$FALLBACK"
 grep -Fq -- '--preserve-home' "$FALLBACK"
 grep -Fq 'coredumpctl info /usr/bin/python3' "$FALLBACK"
+grep -Fq 'mechos-installer-radio-signal-hotfix.sh' "$PATCHER"
 grep -Fq 'mechos-live-installer-runtime-guard.sh' "$PATCHER"
 grep -Fq 'mechos-live-installer-crash-fallback.sh' "$PATCHER"
 
-# The default Clean Install radio button emits toggled immediately when checked.
-# It must be selected only after every widget touched by set_mode() exists.
+# Reference v5 must not choose Clean Install until all UI state targets exist.
+# The later radio guard then changes this raw setChecked call into signal-blocked
+# initialization before the ISO is packed.
 python3 - "$INSTALLER" <<'PY'
 from pathlib import Path
 import sys
@@ -49,13 +62,13 @@ required=[
 if select < 0 or any(p < 0 for p in required):
     raise SystemExit('v5 installer default-mode initialization markers are missing')
 if select <= max(required):
-    raise SystemExit('v5 installer selects Clean Install before set_mode target widgets exist')
-print('v5 installer default-mode initialization order passed.')
+    raise SystemExit('v5 installer selects Clean Install before state widgets exist')
+print('v5 installer pre-guard initialization order passed.')
 PY
 
 # Simulate the same source-patcher chain used by the Build MechOS workflow and
-# require the runtime guard/fallback to run after the final installer layout,
-# but before post-install staging is committed and before mkarchiso starts.
+# require radio guard -> runtime guard -> fallback ordering after the final v5
+# installer layout, before post-install staging and mkarchiso.
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 cp scripts/build-mechos-archiso.sh "$tmp"
@@ -76,6 +89,7 @@ import sys
 text=Path(sys.argv[1]).read_text(encoding='utf-8')
 items=[
  'mechos-reference-v5-installer-layout.sh',
+ 'mechos-installer-radio-signal-hotfix.sh',
  'mechos-live-installer-runtime-guard.sh',
  'mechos-live-installer-crash-fallback.sh',
  'mechos-reference-v5-postinstall-stage.sh commit',
@@ -83,13 +97,13 @@ items=[
 ]
 pos=[text.find(x) for x in items]
 if any(p < 0 for p in pos):
-    raise SystemExit('Live installer runtime guard/fallback build stage is missing')
+    raise SystemExit('Live installer radio/runtime/fallback build stage is missing')
 if pos != sorted(pos):
-    raise SystemExit('Live installer runtime guard/fallback is in the wrong v5 build order')
+    raise SystemExit('Live installer radio/runtime/fallback stages are in the wrong v5 build order')
 mk=text.rfind('\nmkarchiso -v \\\n')
 if mk < 0 or pos[-1] >= mk:
     raise SystemExit('Live installer finalization no longer happens before mkarchiso')
-print('Live installer runtime guard/fallback build-order validation passed.')
+print('Live installer radio/runtime/fallback build-order validation passed.')
 PY
 
-echo 'MechOS Live installer runtime guard/fallback validation passed.'
+echo 'MechOS Live installer radio/runtime/fallback validation passed.'
