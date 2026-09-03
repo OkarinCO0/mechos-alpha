@@ -4,6 +4,8 @@ set -Eeuo pipefail
 PHASE="${1:-final}"
 ROOT="/workspace/archlive/airootfs"
 ARCHIVE="$ROOT/usr/share/mechos/install-payload/mechos-rootfs.tar.zst"
+POSTINSTALL_STAGE="/tmp/mechos-reference-v5-postinstall-root"
+POSTINSTALL_STATE="/tmp/mechos-reference-v5-postinstall-staged.list"
 
 log() { printf '[MechOS Final Payload] %s\n' "$*"; }
 fail() { printf '[MechOS Final Payload] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -18,6 +20,14 @@ trap 'rm -rf "$STAGE"' EXIT
 
 tar --zstd -xpf "$ARCHIVE" -C "$STAGE"
 
+# Creator Mode and Quick Actions are post-install-only. Their v5 patchers run
+# against temporary build copies, captured under POSTINSTALL_STAGE. Apply those
+# patched copies to the installed tree before overlaying the true Live runtime.
+if [ -d "$POSTINSTALL_STAGE" ]; then
+  rsync -aHAX --numeric-ids "$POSTINSTALL_STAGE"/ "$STAGE"/
+  log "merged patched post-install-only Reference UI v5 surfaces"
+fi
+
 overlay_path() {
   local rel="$1"
   local src="$ROOT$rel"
@@ -29,6 +39,8 @@ overlay_path() {
 
 # Final MechOS-owned runtime. Overlay the finished Live/reference copies after
 # every late integration so the installed system cannot retain an older UI.
+# Post-install-only files are intentionally absent from Live at this point, so
+# their patched copies above remain untouched.
 for rel in \
   /usr/local/bin/mechscope \
   /usr/local/bin/mechscope.real \
@@ -39,6 +51,7 @@ for rel in \
   /usr/local/bin/mechos-update-helper \
   /usr/local/bin/mechos-update \
   /usr/local/bin/mechos-quick-actions \
+  /usr/local/bin/mechos-quick-actions.real \
   /usr/local/bin/mechos-quick-actions-daemon \
   /usr/local/bin/mechos-stream-center \
   /usr/local/bin/mechos-stream-control \
@@ -70,11 +83,37 @@ do
   overlay_path "$rel"
 done
 
-# Preserve post-install-only files already in the archive, then rebuild with the
-# exact final reference runtime overlaid above.
+pick_surface() {
+  local base="$1"
+  if [ -f "$STAGE/usr/local/bin/$base.real" ]; then
+    printf '%s\n' "$STAGE/usr/local/bin/$base.real"
+  elif [ -f "$STAGE/usr/local/bin/$base" ]; then
+    printf '%s\n' "$STAGE/usr/local/bin/$base"
+  else
+    return 1
+  fi
+}
+
+CREATOR_FILE="$(pick_surface mechos-creator-mode)" || fail "Creator Mode missing from installed payload"
+QUICK_FILE="$(pick_surface mechos-quick-actions)" || fail "Quick Actions missing from installed payload"
+grep -Fq 'MECHOS_REFERENCE_CREATOR_V5' "$CREATOR_FILE" \
+  || fail "Creator Mode did not receive the Reference UI v5 dashboard/store layout"
+grep -Fq 'MECHOS_REFERENCE_QUICK_ACTIONS_V5' "$QUICK_FILE" \
+  || fail "Quick Actions did not receive the Reference UI v5 layout"
+
+# Rebuild the installed archive with both post-install-only and Live/reference
+# surfaces synchronized to their final v5 state.
 TMP_ARCHIVE="$ARCHIVE.tmp"
 tar --zstd -cpf "$TMP_ARCHIVE" -C "$STAGE" .
 mv -f "$TMP_ARCHIVE" "$ARCHIVE"
+
+# Temporary copies must never leak into the Live ISO.
+rm -rf "$POSTINSTALL_STAGE"
+rm -f "$POSTINSTALL_STATE"
+[ ! -e "$ROOT/usr/local/bin/mechos-creator-mode" ] || fail "post-install-only Creator Mode leaked into Live rootfs"
+[ ! -e "$ROOT/usr/local/bin/mechos-creator-mode.real" ] || fail "post-install-only Creator Mode wrapper leaked into Live rootfs"
+[ ! -e "$ROOT/usr/local/bin/mechos-quick-actions" ] || fail "post-install-only Quick Actions leaked into Live rootfs"
+[ ! -e "$ROOT/usr/local/bin/mechos-quick-actions.real" ] || fail "post-install-only Quick Actions wrapper leaked into Live rootfs"
 
 # Verify the installed system will receive v5, not an older snapshot.
 tar --zstd -tf "$ARCHIVE" ./usr/share/mechos/reference-ui-v5.json >/dev/null \
