@@ -11,8 +11,22 @@ marker = '# MECHOS_REFERENCE_UI_V5_FINAL'
 if marker in text:
     raise SystemExit(0)
 
-needle = 'bash /workspace/scripts/mechos-current-integration.sh final\n\nmkarchiso -v'
-insert = '''bash /workspace/scripts/mechos-current-integration.sh final
+# Insert immediately before the final ArchISO build command. Older cumulative
+# patchers are allowed to add any number of integration lines above mkarchiso,
+# so do not depend on an exact two-line relationship with current-integration.
+anchor = '\nmkarchiso -v \\\n'
+pos = text.rfind(anchor)
+if pos < 0:
+    raise SystemExit('[MechOS Reference UI v5] final mkarchiso insertion point not found')
+
+# Sanity-check that the current late integration stage exists before the final
+# build. This protects against accidentally inserting v5 into an unrelated
+# script that merely happens to invoke mkarchiso.
+late = text.rfind('# MECHOS_CURRENT_INTEGRATION_LATE', 0, pos)
+if late < 0:
+    raise SystemExit('[MechOS Reference UI v5] current late integration stage not found before mkarchiso')
+
+insert = '''
 
 # MECHOS_REFERENCE_UI_V5_FINAL
 # The approved visual reference is the last UI authority. Final Store, MechScope,
@@ -26,10 +40,7 @@ bash /workspace/scripts/mechos-reference-v5-controls-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-compat.sh
 bash /workspace/scripts/mechos-reference-v5-installer-layout.sh
 bash /workspace/scripts/mechos-finalize-install-payload.sh final
+'''
 
-mkarchiso -v'''
-if needle not in text:
-    raise SystemExit('[MechOS Reference UI v5] late build insertion point not found')
-
-text = text.replace(needle, insert, 1)
+text = text[:pos] + insert + text[pos:]
 path.write_text(text, encoding='utf-8')
