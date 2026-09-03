@@ -9,18 +9,17 @@ fail(){ printf '[MechOS Source UI] ERROR: %s\n' "$*" >&2; exit 1; }
 [ -d "$SRC" ] || fail "source UI directory missing: $SRC"
 
 install_sources(){
-  local tree="$1" dst="$tree/usr/local/share/mechos/ui"
+  local tree="$1"
+  local dst="$tree/usr/local/share/mechos/ui"
   mkdir -p "$dst"
-  for f in fixed_canvas.py creator_shell.py performance_shell.py update_shell.py recovery_shell.py quick_actions_shell.py; do
+  for f in fixed_canvas.py creator_shell.py performance_shell.py update_shell.py recovery_shell.py quick_actions_shell.py installer_shell.py oobe_shell.py; do
     [ -f "$SRC/$f" ] || fail "source UI file missing: $f"
     install -m 0644 "$SRC/$f" "$dst/$f"
   done
 }
 
 owner_file(){
-  # Keep dependent local assignments separate under `set -u`. In a single
-  # `local ... public="$tree/.../$name"` statement Bash may expand $name before
-  # the same statement has assigned it, producing `name: unbound variable`.
+  # Keep dependent local assignments separate under `set -u`.
   local tree="$1"
   local name="$2"
   local cls="$3"
@@ -31,22 +30,29 @@ owner_file(){
 }
 
 patch_python(){
-  local path="$1" cls="$2" kind="$3"
+  local path="$1"
+  local cls="$2"
+  local kind="$3"
   python3 - "$path" "$cls" "$kind" <<'PY'
 from pathlib import Path
 import sys
+
 path=Path(sys.argv[1]); cls=sys.argv[2]; kind=sys.argv[3]
 text=path.read_text(encoding='utf-8')
 marker=f'# MECHOS_SOURCE_SYSTEM_UI_V1_{kind.upper()}'
-if marker in text: raise SystemExit(0)
+if marker in text:
+    raise SystemExit(0)
 classpos=text.find('class '+cls+'(')
-if classpos < 0: raise SystemExit(f'[MechOS Source UI] {cls} class not found in {path}')
+if classpos < 0:
+    raise SystemExit(f'[MechOS Source UI] {cls} class not found in {path}')
 anchors=['\ndef main():','\nif __name__','\napp = QApplication','\napp=QApplication']
 anchor=-1
-for a in anchors:
-    p=text.find(a,classpos)
-    if p>=0 and (anchor<0 or p<anchor): anchor=p
-if anchor<0: raise SystemExit(f'[MechOS Source UI] startup anchor not found for {path}')
+for item in anchors:
+    p=text.find(item,classpos)
+    if p >= 0 and (anchor < 0 or p < anchor):
+        anchor=p
+if anchor < 0:
+    raise SystemExit(f'[MechOS Source UI] startup anchor not found for {path}')
 
 loader=r'''
 def _mechos_ui_module(filename, module_name):
@@ -56,6 +62,8 @@ def _mechos_ui_module(filename, module_name):
     current=_sys.modules.get(module_name)
     if current is not None: return current
     source=_Path('/usr/local/share/mechos/ui')/filename
+    parent=str(source.parent)
+    if parent not in _sys.path: _sys.path.insert(0,parent)
     spec=_ilu.spec_from_file_location(module_name,source)
     if spec is None or spec.loader is None: raise RuntimeError(f'Unable to load MechOS UI source: {source}')
     module=_ilu.module_from_spec(spec); _sys.modules[module_name]=module; spec.loader.exec_module(module); return module
@@ -114,8 +122,7 @@ def _mechos_recovery_build(self):
         try: subprocess.Popen(args)
         except Exception: pass
     actions={'rescan':self.rescan,'hardware':self.hardware,'repair':self.repair_boot,'rollback':self.rollback,'logs':self.load_logs,
-      'keep-home':lambda:_spawn(['/usr/local/bin/mechos-preserve-home']),
-      'disk':self.hardware,
+      'keep-home':lambda:_spawn(['/usr/local/bin/mechos-preserve-home']), 'disk':self.hardware,
       'mechscope':lambda:_spawn(['/usr/local/bin/mechos-mode-launch','gaming']) if __import__('pathlib').Path('/usr/local/bin/mechos-mode-launch').exists() else _spawn(['/usr/local/bin/mechos-return-to-mechscope'])}
     ui=shell.RecoveryShell(self,actions,self); self.setCentralWidget(ui); self._mechos_source_ui=ui
     self.root_combo=ui.root_combo; self.esp_combo=ui.esp_combo; self.output=ui.output
@@ -153,34 +160,82 @@ def _mechos_creator_build(self):
     _QTimer.singleShot(0,self.showFullScreen); _QTimer.singleShot(250,self.showFullScreen)
 Creator.build=_mechos_creator_build
 '''
-else: raise SystemExit('unknown UI kind: '+kind)
+elif kind=='oobe':
+    override=r'''
+# MECHOS_SOURCE_SYSTEM_UI_V1_OOBE
+'''+loader+r'''
+def _mechos_oobe_build(self):
+    shell=_mechos_ui_module('oobe_shell.py','mechos_oobe_shell')
+    ui=shell.OOBEShell(self,timezones(),COMMON_LOCALES,KEYMAPS,self)
+    self.setCentralWidget(ui); self._mechos_source_ui=ui
+    for n in ('stack','back','next','username','password','confirm','zone','locale','keyboard','hostname','review'): setattr(self,n,getattr(ui,n))
+    self.setWindowFlag(Qt.WindowType.FramelessWindowHint,True); self.setWindowState(Qt.WindowState.WindowFullScreen)
+OOBE.build_ui=_mechos_oobe_build
+'''
+elif kind=='installer':
+    override=r'''
+# MECHOS_SOURCE_SYSTEM_UI_V1_INSTALLER
+'''+loader+r'''
+def _mechos_installer_build(self):
+    shell=_mechos_ui_module('installer_shell.py','mechos_installer_shell')
+    ui=shell.InstallerShell(self,self); self.setCentralWidget(ui); self._mechos_source_ui=ui
+    self.mode_buttons=ui.mode_buttons; self.progress=ui.progress
+    self.setWindowFlag(Qt.WindowType.FramelessWindowHint,True); self.setWindowState(Qt.WindowState.WindowFullScreen)
+    ui.set_drive(getattr(self,'selected_disk',''),getattr(self,'selected_model',''),getattr(self,'selected_size',''))
+    ui.set_mode(getattr(self,'install_mode','clean'))
+
+def _mechos_installer_set_mode(self,mode,checked=True,check=None):
+    if not checked: return
+    self.install_mode=mode
+    ui=getattr(self,'_mechos_source_ui',None)
+    if ui is not None: ui.set_mode(mode)
+
+def _mechos_installer_refresh_target_labels(self):
+    ui=getattr(self,'_mechos_source_ui',None)
+    if ui is not None: ui.set_drive(getattr(self,'selected_disk',''),getattr(self,'selected_model',''),getattr(self,'selected_size',''))
+
+Installer.build_ui=_mechos_installer_build
+Installer.set_mode=_mechos_installer_set_mode
+Installer.refresh_target_labels=_mechos_installer_refresh_target_labels
+'''
+else:
+    raise SystemExit('unknown UI kind: '+kind)
+
 text=text[:anchor]+override+text[anchor:]
-compile(text,str(path),'exec'); path.write_text(text,encoding='utf-8')
+compile(text,str(path),'exec')
+path.write_text(text,encoding='utf-8')
 PY
   chmod 755 "$path"
   PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$path" || fail "Python validation failed: $path"
 }
 
-patch_tree(){
-  local tree="$1" p
+patch_shared_tree(){
+  local tree="$1"
+  local p
   install_sources "$tree"
   p="$(owner_file "$tree" mechos-performance-center Perf)" || fail "Performance Center owner missing"; patch_python "$p" Perf performance
   p="$(owner_file "$tree" mechos-update-center UpdateCenter)" || fail "Update Center owner missing"; patch_python "$p" UpdateCenter update
   p="$(owner_file "$tree" mechos-recovery-center Recovery)" || fail "Recovery Center owner missing"; patch_python "$p" Recovery recovery
   p="$(owner_file "$tree" mechos-quick-actions QuickActions)" || fail "Quick Actions owner missing"; patch_python "$p" QuickActions quick
   p="$(owner_file "$tree" mechos-creator-mode Creator)" || fail "Creator Mode owner missing"; patch_python "$p" Creator creator
+  p="$(owner_file "$tree" mechos-oobe OOBE)" || fail "OOBE owner missing"; patch_python "$p" OOBE oobe
 }
 
-patch_tree "$ROOT"
+# Live/root system surfaces.
+patch_shared_tree "$ROOT"
+p="$(owner_file "$ROOT" mechos-live-setup Installer)" || fail "Live Installer owner missing"
+patch_python "$p" Installer installer
 
-# The post-install stage normally captures Creator/Quick Actions after this pass,
-# but patch the archived installed tree too so this integration stays correct if
-# staging order changes later.
+# Installed-system payload receives every shared surface, including OOBE, but
+# not the Live-only installer.
 if [ -s "$ARCHIVE" ]; then
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
   tar --zstd -xpf "$ARCHIVE" -C "$tmp"
-  patch_tree "$tmp"
-  replacement="$ARCHIVE.source-ui"; tar --zstd -cpf "$replacement" -C "$tmp" .; mv -f "$replacement" "$ARCHIVE"
+  patch_shared_tree "$tmp"
+  replacement="$ARCHIVE.source-ui"
+  tar --zstd -cpf "$replacement" -C "$tmp" .
+  mv -f "$replacement" "$ARCHIVE"
   rm -rf "$tmp"; trap - EXIT
 fi
-log 'Creator Mode, Quick Actions, Performance, Update and Recovery now use source-owned visual shells'
+
+log 'Creator, Quick Actions, Performance, Update, Recovery, OOBE and Live Installer use source-owned final GUI authority'
