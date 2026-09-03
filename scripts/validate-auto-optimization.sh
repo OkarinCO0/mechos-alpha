@@ -11,18 +11,20 @@ fail(){ echo "[validate-auto-optimization] ERROR: $*" >&2; exit 1; }
 [ -f "$PATCHER" ] || fail "Reference v5 patcher missing"
 
 bash -n "$HOTFIX" || fail "auto optimization hotfix shell syntax failed"
-grep -Fq 'MECHOS_AUTO_OPTIMIZATION_V4' "$HOTFIX" || fail "runtime marker missing"
+grep -Fq 'MECHOS_PROFILE_BACKEND_V5' "$HOTFIX" || fail "hardware-aware backend marker missing"
+grep -Fq 'def set_profile(profile, parent=None):' "$HOTFIX" || fail "set_profile backend replacement missing"
 grep -Fq 'systemd-detect-virt' "$HOTFIX" || fail "virtualization detection missing"
-grep -Fq "candidates=['balanced','power-saver'] if virtual else ['performance','balanced','power-saver']" "$HOTFIX" || fail "profile fallback policy missing"
-grep -Fq 'ast.parse' "$HOTFIX" || fail "structural Python action discovery missing"
-grep -Fq 'ast.get_source_segment' "$HOTFIX" || fail "structural action replacement missing"
-grep -Fq "{'Auto Optimization','Optimize Now'}" "$HOTFIX" || fail "optimization action labels are not structurally targeted"
+grep -Fq "['balanced','power-saver'] if virtual else ['performance','balanced','power-saver']" "$HOTFIX" || fail "performance fallback policy missing"
+grep -Fq "node.name=='set_profile'" "$HOTFIX" || fail "structural set_profile discovery missing"
+grep -Fq 'profile_fn.end_lineno' "$HOTFIX" || fail "structural function replacement missing"
 grep -Fq "grep -Fq 'class Perf(' \"\$public\"" "$HOTFIX" || fail "public Performance Center ownership detection missing"
 grep -Fq "grep -Fq 'class Perf(' \"\$real\"" "$HOTFIX" || fail ".real fallback ownership detection missing"
-grep -Fq 'lambda:mechos_auto_optimize(self)' "$HOTFIX" || fail "Auto Optimization action is not rewired"
-if grep -Fq '[ -f "$public.real" ] && perf="$public.real"' "$HOTFIX"; then
-  fail "stale unconditional .real preference returned"
+if grep -Fq "{'Auto Optimization','Optimize Now'}" "$HOTFIX"; then
+  fail "fragile UI action discovery returned"
 fi
-grep -Fq 'mechos-auto-optimization-hotfix.sh' "$PATCHER" || fail "hotfix is not wired into the final build chain"
+if grep -Fq 'ast.get_source_segment' "$HOTFIX"; then
+  fail "fragile UI action source replacement returned"
+fi
+grep -Fq 'mechos-auto-optimization-hotfix.sh' "$PATCHER" || fail "backend hotfix is not wired into the final build chain"
 
-echo '[validate-auto-optimization] OK: Auto Optimization selects the final Performance Center owner and uses VM/hardware-aware profiles'
+echo '[validate-auto-optimization] OK: Performance Center set_profile backend is VM/hardware-aware and no longer depends on UI button rewriting'
