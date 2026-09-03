@@ -78,6 +78,9 @@ bash /workspace/scripts/mechos-auto-optimization-hotfix.sh
 # Update Center and Recovery Center now use repository-owned visual modules that
 # match the approved MechOS mockups. Legacy layouts remain backend-only.
 bash /workspace/scripts/mechos-source-owned-system-ui.sh
+# FINAL BOOT SPLASH AUTHORITY. Use the approved reference artwork directly in
+# Plymouth instead of reconstructing it from the older logo/text animation.
+bash /workspace/scripts/mechos-reference-splash-integration.sh
 bash /workspace/scripts/mechos-reference-v5-postinstall-stage.sh commit
 bash /workspace/scripts/mechos-finalize-install-payload.sh final
 '''
