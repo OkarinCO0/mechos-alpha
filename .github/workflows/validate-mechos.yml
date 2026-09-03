@@ -32,3 +32,4 @@ jobs:
           bash scripts/validate-reference-v5.sh
           bash scripts/validate-live-installer-runtime-guard.sh
           bash scripts/validate-vm-ui-runtime-guard.sh
+          bash scripts/validate-vm-shortcut-launch.sh
