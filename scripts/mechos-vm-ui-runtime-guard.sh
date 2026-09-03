@@ -2,127 +2,151 @@
 set -Eeuo pipefail
 
 ROOT="/workspace/archlive/airootfs"
-BIN="$ROOT/usr/local/bin"
-LIBEXEC="$ROOT/usr/local/libexec"
-PROFILE="/workspace/archlive/profiledef.sh"
+ARCHIVE="$ROOT/usr/share/mechos/install-payload/mechos-rootfs.tar.zst"
 
 log() { printf '[MechOS VM UI Guard] %s\n' "$*"; }
 fail() { printf '[MechOS VM UI Guard] ERROR: %s\n' "$*" >&2; exit 1; }
 trap 'rc=$?; printf "[MechOS VM UI Guard] ERROR: line %s failed: %s (exit %s)\n" "$LINENO" "$BASH_COMMAND" "$rc" >&2' ERR
 
-mkdir -p "$LIBEXEC"
+[ -d "$ROOT" ] || fail "ArchISO rootfs is missing"
+[ -s "$ARCHIVE" ] || fail "installed payload is missing"
 
-wrap_ui() {
+patch_python_ui() {
   local public="$1"
-  local real="$2"
-  local label="$3"
-  local logfile="$4"
+  local label="$2"
+  local file="$public"
+  [ -f "$public.real" ] && file="$public.real"
+  [ -f "$file" ] || fail "$label implementation is missing: $file"
 
-  [ -x "$public" ] || fail "$label executable is missing: $public"
-
-  if grep -Fq '# MECHOS_VM_UI_RUNTIME_GUARD_V1' "$public" 2>/dev/null; then
-    log "$label is already VM guarded"
-    return 0
-  fi
-
-  mv -f "$public" "$real"
-  chmod 755 "$real"
-
-  cat > "$public" <<WRAPPER
-#!/usr/bin/env bash
-# MECHOS_VM_UI_RUNTIME_GUARD_V1
-set -Eeuo pipefail
-
-REAL="$real"
-STATE_DIR="\${XDG_STATE_HOME:-\$HOME/.local/state}/mechos"
-LOG="\$STATE_DIR/$logfile"
-mkdir -p "\$STATE_DIR"
-
-virt=""
-if command -v systemd-detect-virt >/dev/null 2>&1; then
-  virt="\$(systemd-detect-virt 2>/dev/null || true)"
-fi
-
-{
-  printf '\n===== $label %s =====\n' "\$(date -Is 2>/dev/null || date)"
-  printf 'virt=%s session=%s desktop=%s wayland=%s display=%s\n' \
-    "\${virt:-none}" "\${XDG_SESSION_TYPE:-unknown}" "\${XDG_CURRENT_DESKTOP:-unknown}" \
-    "\${WAYLAND_DISPLAY:-}" "\${DISPLAY:-}"
-
-  if [ -n "\$virt" ] && [ "\$virt" != "none" ]; then
-    # QWidget-based MechOS surfaces do not need accelerated Qt rendering in a
-    # VM. VirtualBox/VMware/QEMU graphics stacks have repeatedly crashed or
-    # stalled compositor/UI startup, so use the same safe path as the Live
-    # installer while preserving normal acceleration on physical hardware.
-    export MECHOS_VM_MODE=1
-    export MECHOS_DISABLE_GAMESCOPE=1
-    export QT_OPENGL=software
-    export LIBGL_ALWAYS_SOFTWARE=1
-    export QT_QUICK_BACKEND=software
-    export QSG_RHI_BACKEND=software
-    printf 'VM-safe UI rendering enabled.\n'
-  fi
-
-  export PYTHONFAULTHANDLER=1
-  exec "\$REAL" "\$@"
-} >>"\$LOG" 2>&1
-WRAPPER
-
-  chmod 755 "$public"
-  bash -n "$public" || fail "$label VM wrapper shell syntax failed"
-  grep -Fq '# MECHOS_VM_UI_RUNTIME_GUARD_V1' "$public" || fail "$label VM guard marker missing"
-  [ -x "$real" ] || fail "$label real executable was not preserved"
-}
-
-# Reference v5 post-install staging materializes Creator Mode temporarily before
-# this guard runs, so both applications can be wrapped here and then Creator
-# Mode is captured back into the installed payload by the normal v5 commit step.
-wrap_ui "$BIN/mechscope" "$LIBEXEC/mechscope-vm-real" "MechScope 2.0" "mechscope-vm.log"
-wrap_ui "$BIN/mechos-creator-mode" "$LIBEXEC/mechos-creator-mode-vm-real" "Creator Mode" "creator-mode-vm.log"
-
-# Strengthen the gaming-layer VM detector. Older versions relied on DMI/PCI
-# strings only. systemd-detect-virt is already available on MechOS and is the
-# most reliable first test in VirtualBox, VMware and QEMU/KVM guests.
-LAYER="$BIN/mechos-gaming-layer"
-if [ -f "$LAYER" ] && grep -Fq 'is_virtual_gpu_environment() {' "$LAYER"; then
-  python3 - "$LAYER" <<'PY'
+  python3 - "$file" "$label" <<'PY'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1])
-t=p.read_text(encoding='utf-8')
-marker='# MECHOS_VM_SYSTEMD_DETECT_VIRT_V1'
+
+path=Path(sys.argv[1]); label=sys.argv[2]
+text=path.read_text(encoding='utf-8')
+marker='# MECHOS_VM_UI_RUNTIME_GUARD_V2'
+if marker not in text:
+    candidates=['app = QApplication(', 'app=QApplication(']
+    positions=[text.find(x) for x in candidates if text.find(x) >= 0]
+    if not positions:
+        raise SystemExit(f'[MechOS VM UI Guard] QApplication startup not found in {path}')
+    pos=min(positions)
+    block=r'''# MECHOS_VM_UI_RUNTIME_GUARD_V2
+# Keep the exact same MechOS UI in VMs, but avoid virtual-GPU Qt/GL stalls.
+def _mechos_vm_safe_runtime():
+    import os as _os
+    import subprocess as _sp
+    from pathlib import Path as _Path
+    try:
+        _virt=_sp.check_output(['systemd-detect-virt'],text=True,stderr=_sp.DEVNULL,timeout=2).strip()
+    except Exception:
+        _virt=''
+    if _virt and _virt != 'none':
+        _os.environ['MECHOS_VM_MODE']='1'
+        _os.environ['MECHOS_DISABLE_GAMESCOPE']='1'
+        _os.environ['QT_OPENGL']='software'
+        _os.environ['LIBGL_ALWAYS_SOFTWARE']='1'
+        _os.environ['QT_QUICK_BACKEND']='software'
+        _os.environ['QSG_RHI_BACKEND']='software'
+        try:
+            _state=_Path(_os.environ.get('XDG_STATE_HOME',str(_Path.home()/'.local/state')))/'mechos'
+            _state.mkdir(parents=True,exist_ok=True)
+            with (_state/'vm-ui.log').open('a',encoding='utf-8') as _f:
+                _f.write(f'{__file__}: virtualization={_virt}; VM-safe Qt rendering enabled\n')
+        except Exception:
+            pass
+_mechos_vm_safe_runtime()
+
+'''
+    text=text[:pos]+block+text[pos:]
+compile(text,str(path),'exec')
+path.write_text(text,encoding='utf-8')
+PY
+
+  PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$file" \
+    || fail "$label failed Python validation after VM runtime patch"
+  grep -Fq '# MECHOS_VM_UI_RUNTIME_GUARD_V2' "$file" \
+    || fail "$label VM runtime marker is missing"
+}
+
+patch_mode_runtime() {
+  local tree="$1"
+  local layer="$tree/usr/local/bin/mechos-gaming-layer"
+  local control="$tree/usr/local/bin/mechos-gaming-layer-control"
+
+  if [ -f "$layer" ] && grep -Fq 'is_virtual_gpu_environment() {' "$layer"; then
+    python3 - "$layer" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); t=p.read_text(encoding='utf-8')
+marker='# MECHOS_VM_SYSTEMD_DETECT_VIRT_V2'
 if marker not in t:
     needle='is_virtual_gpu_environment() {\n'
-    insert='''is_virtual_gpu_environment() {\n  # MECHOS_VM_SYSTEMD_DETECT_VIRT_V1\n  local virt\n  virt="$(systemd-detect-virt 2>/dev/null || true)"\n  if [ -n "$virt" ] && [ "$virt" != "none" ]; then\n    printf '[MechOS] Virtual machine detected by systemd-detect-virt: %s\\n' "$virt" >>"$LOG_FILE"\n    return 0\n  fi\n'''
+    insert='''is_virtual_gpu_environment() {\n  # MECHOS_VM_SYSTEMD_DETECT_VIRT_V2\n  local virt\n  virt="$(systemd-detect-virt 2>/dev/null || true)"\n  if [ -n "$virt" ] && [ "$virt" != "none" ]; then\n    printf '[MechOS] Virtual machine detected by systemd-detect-virt: %s\\n' "$virt" >>"$LOG_FILE"\n    return 0\n  fi\n'''
     if needle not in t:
-        raise SystemExit('[MechOS VM UI Guard] gaming-layer VM detector function not found')
+        raise SystemExit('[MechOS VM UI Guard] VM detector function not found')
     t=t.replace(needle,insert,1)
-    p.write_text(t,encoding='utf-8')
-PY
-  chmod 755 "$LAYER"
-  bash -n "$LAYER" || fail "gaming layer failed syntax after VM detector hardening"
-  grep -Fq '# MECHOS_VM_SYSTEMD_DETECT_VIRT_V1' "$LAYER" || fail "systemd VM detection was not added to gaming layer"
-  grep -Fq 'run_direct_mechscope' "$LAYER" || fail "gaming layer has no direct MechScope fallback"
-fi
 
-# Creator Mode is a user service on installed systems. Keep the service pointed
-# at the public wrapper so it automatically receives the VM-safe environment.
+# Before Creator Mode is started as a user service, push the active Plasma
+# display/session environment into the systemd user manager. This matters in
+# VM fallback sessions where the graphical environment was created after the
+# user manager itself started.
+start='systemctl --user start --no-block mechos-creator-mode.service'
+if start in t and 'MECHOS_CREATOR_GRAPHICAL_ENV_V1' not in t:
+    repl='''# MECHOS_CREATOR_GRAPHICAL_ENV_V1\n        systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS XDG_SESSION_TYPE XDG_CURRENT_DESKTOP >/dev/null 2>&1 || true\n        '''+start
+    t=t.replace(start,repl)
+p.write_text(t,encoding='utf-8')
+PY
+    chmod 755 "$layer"
+    bash -n "$layer" || fail "gaming layer syntax failed after VM patch"
+    grep -Fq '# MECHOS_VM_SYSTEMD_DETECT_VIRT_V2' "$layer" \
+      || fail "gaming layer lacks systemd VM detection"
+    grep -Fq 'run_direct_mechscope' "$layer" \
+      || fail "gaming layer has no direct MechScope fallback"
+  fi
+
+  if [ -f "$control" ]; then
+    python3 - "$control" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); t=p.read_text(encoding='utf-8')
+start='systemctl --user start --no-block mechos-creator-mode.service'
+if start in t and 'MECHOS_CREATOR_GRAPHICAL_ENV_V1' not in t:
+    repl='''# MECHOS_CREATOR_GRAPHICAL_ENV_V1\n      systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS XDG_SESSION_TYPE XDG_CURRENT_DESKTOP >/dev/null 2>&1 || true\n      '''+start
+    t=t.replace(start,repl)
+p.write_text(t,encoding='utf-8')
+PY
+    chmod 755 "$control"
+    bash -n "$control" || fail "gaming layer control syntax failed after Creator VM patch"
+  fi
+}
+
+# The v5 post-install staging step has already materialized Creator Mode here.
+# Patch the actual Python implementations in place so Creator remains
+# post-install-only and no extra Live launcher is introduced.
+patch_python_ui "$ROOT/usr/local/bin/mechscope" "MechScope 2.0"
+patch_python_ui "$ROOT/usr/local/bin/mechos-creator-mode" "Creator Mode"
+patch_mode_runtime "$ROOT"
+
+# The gaming-layer/control files are not post-install-only UI surfaces, so make
+# the VM detector + graphical-environment fix directly in the installed payload
+# as well. The later final payload rebuild preserves these changes.
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+tar --zstd -xpf "$ARCHIVE" -C "$tmp"
+patch_mode_runtime "$tmp"
+replacement="$ARCHIVE.vm-ui"
+tar --zstd -cpf "$replacement" -C "$tmp" .
+mv -f "$replacement" "$ARCHIVE"
+rm -rf "$tmp"
+trap - EXIT
+
+# Creator Mode's installed user service must continue launching the public
+# entrypoint; the VM-safe code is inside its real Python implementation.
 CREATOR_UNIT="$ROOT/usr/lib/systemd/user/mechos-creator-mode.service"
 if [ -f "$CREATOR_UNIT" ]; then
   grep -Fq 'ExecStart=/usr/local/bin/mechos-creator-mode' "$CREATOR_UNIT" \
-    || fail "Creator Mode service no longer launches the guarded public entrypoint"
+    || fail "Creator Mode service entrypoint is invalid"
 fi
 
-if [ -f "$PROFILE" ]; then
-  for path in \
-    /usr/local/bin/mechscope \
-    /usr/local/libexec/mechscope-vm-real \
-    /usr/local/bin/mechos-creator-mode \
-    /usr/local/libexec/mechos-creator-mode-vm-real; do
-    if ! grep -Fq "file_permissions[\"$path\"]" "$PROFILE"; then
-      printf '\nfile_permissions["%s"]="0:0:755"\n' "$path" >> "$PROFILE"
-    fi
-  done
-fi
-
-log "MechScope and Creator Mode now use VM-safe Qt rendering in virtual machines while physical hardware keeps the normal accelerated path"
+log "VM startup hardened: Gamescope bypass detection, MechScope safe Qt path, Creator safe Qt path and graphical session environment handoff are installed"
