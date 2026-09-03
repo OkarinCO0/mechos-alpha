@@ -14,6 +14,47 @@ V5_SCRIPTS=(
 for f in "${V5_SCRIPTS[@]}"; do bash -n "$f"; done
 python3 -m py_compile scripts/patch-mechos-reference-v5.py
 
+# Reproduce the exact cumulative patch order used by the ISO workflow against a
+# disposable builder copy. This catches ordering/anchor failures before the
+# expensive ArchISO build begins.
+TMP_BUILDER="$(mktemp)"
+trap 'rm -f "$TMP_BUILDER"' EXIT
+cp scripts/build-mechos-archiso.sh "$TMP_BUILDER"
+python3 scripts/patch-mechos-current.py "$TMP_BUILDER"
+python3 scripts/patch-mechos-partition-screen.py "$TMP_BUILDER"
+python3 scripts/patch-mechos-safe-mode-switching.py "$TMP_BUILDER"
+python3 scripts/patch-mechos-default-wallpaper.py "$TMP_BUILDER"
+python3 scripts/patch-mechos-substance-painter.py "$TMP_BUILDER"
+python3 scripts/patch-mechos-creator-postinstall.py "$TMP_BUILDER"
+python3 scripts/patch-mechos-rgb-quick-actions.py "$TMP_BUILDER"
+bash scripts/patch-mechos-live-autologin-partitionmanager.sh "$TMP_BUILDER"
+python3 scripts/patch-mechos-reference-v5.py "$TMP_BUILDER"
+bash -n "$TMP_BUILDER"
+test "$(grep -c '^# MECHOS_REFERENCE_UI_V5_FINAL$' "$TMP_BUILDER")" -eq 1
+grep -Fq 'mechos-reference-v5-integration.sh final' "$TMP_BUILDER"
+grep -Fq 'mechos-finalize-install-payload.sh final' "$TMP_BUILDER"
+python3 - "$TMP_BUILDER" <<'PY'
+from pathlib import Path
+import sys
+text=Path(sys.argv[1]).read_text(encoding='utf-8')
+v5=text.rfind('# MECHOS_REFERENCE_UI_V5_FINAL')
+mk=text.rfind('\nmkarchiso -v \\\n')
+if v5 < 0 or mk < 0 or v5 >= mk:
+    raise SystemExit('Reference UI v5 is not immediately upstream of the final ArchISO build stage')
+for required in (
+    'mechos-reference-v5-store-layout.sh',
+    'mechos-reference-v5-mechscope-layout.sh',
+    'mechos-reference-v5-creator-layout.sh',
+    'mechos-reference-v5-controls-layout.sh',
+    'mechos-reference-v5-controls-compat.sh',
+    'mechos-reference-v5-installer-layout.sh',
+    'mechos-finalize-install-payload.sh final',
+):
+    if text.find(required, v5, mk) < 0:
+        raise SystemExit(f'missing final v5 build stage: {required}')
+print('Reference UI v5 cumulative patch-chain simulation passed.')
+PY
+
 # Compile every quoted PY heredoc used by the v5 generators. This catches the
 # nested-quote/parser class of bug before the expensive ArchISO workflow.
 python3 - <<'PY'
