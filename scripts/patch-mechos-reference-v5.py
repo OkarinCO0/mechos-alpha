@@ -45,6 +45,9 @@ bash /workspace/scripts/mechos-reference-v5-mechscope-exact-layout.sh
 bash /workspace/scripts/mechos-reference-v5-creator-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-compat.sh
+# Add the native MechOS AUR helper after Update Center's final reference layout
+# exists, so its AUR Packages entry cannot be overwritten by an earlier UI pass.
+bash /workspace/scripts/mechos-aur-helper-integration.sh
 bash /workspace/scripts/mechos-reference-v5-installer-layout.sh
 # Keep-Home Live Update runs against an installed root from the Live image.
 # Repair Pacman 7+ DownloadUser/sandbox prerequisites before its online package
