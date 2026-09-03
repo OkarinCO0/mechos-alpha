@@ -30,6 +30,7 @@ jobs:
           bash scripts/validate-radarai-performance-integration.sh
           bash scripts/validate-creator-mode-launch.sh
           bash scripts/validate-reference-v5.sh
+          bash scripts/validate-mechscope-exact-reference.sh
           bash scripts/validate-live-installer-runtime-guard.sh
           bash scripts/validate-vm-ui-runtime-guard.sh
           bash scripts/validate-vm-shortcut-launch.sh
