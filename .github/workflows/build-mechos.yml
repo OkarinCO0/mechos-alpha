@@ -40,6 +40,7 @@ jobs:
           bash scripts/validate-radarai-performance-integration.sh
           bash scripts/validate-creator-mode-launch.sh
           bash scripts/validate-reference-v5.sh
+          bash scripts/validate-mechscope-exact-reference.sh
           bash scripts/validate-live-installer-runtime-guard.sh
           bash scripts/validate-vm-ui-runtime-guard.sh
           bash scripts/validate-vm-shortcut-launch.sh
@@ -74,6 +75,7 @@ jobs:
           grep -Fq 'mechos-reference-v5-integration.sh final' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-v5-store-layout.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-v5-mechscope-layout.sh' scripts/build-mechos-archiso.sh
+          grep -Fq 'mechos-reference-v5-mechscope-exact-layout.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-v5-creator-layout.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-v5-controls-layout.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-reference-v5-controls-compat.sh' scripts/build-mechos-archiso.sh
