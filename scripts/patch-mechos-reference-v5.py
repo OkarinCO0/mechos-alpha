@@ -37,6 +37,11 @@ bash /workspace/scripts/mechos-reference-v5-postinstall-stage.sh prepare
 bash /workspace/scripts/mechos-reference-v5-integration.sh final
 bash /workspace/scripts/mechos-reference-v5-store-layout.sh
 bash /workspace/scripts/mechos-reference-v5-mechscope-layout.sh
+# The generated reference images are now the real MechScope composition spec.
+# This late pass replaces the simplified home with the exact three-column
+# dashboard, raster circular telemetry, launcher/system columns and bottom tool
+# strip while preserving the existing Steam/store/mode-switch backends.
+bash /workspace/scripts/mechos-reference-v5-mechscope-exact-layout.sh
 bash /workspace/scripts/mechos-reference-v5-creator-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-compat.sh
