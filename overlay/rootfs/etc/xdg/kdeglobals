@@ -1,0 +1,5 @@
+# MechOS low-latency Plasma defaults
+# Keep visual styling, but make UI transitions immediate so mouse/keyboard
+# input is never delayed behind a fade or popup animation.
+[KDE]
+AnimationDurationFactor=0
