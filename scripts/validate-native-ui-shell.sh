@@ -15,9 +15,16 @@ fail(){ echo "[validate-native-ui-shell] ERROR: $*" >&2; exit 1; }
 python3 -m py_compile "$SHELL_SRC" || fail "MechScope shell Python syntax failed"
 bash -n "$INTEGRATION" || fail "native UI integration shell syntax failed"
 
-grep -Fq 'BASE_W = 1920' "$SHELL_SRC" || fail "authored 1920px design canvas missing"
-grep -Fq 'BASE_H = 1080' "$SHELL_SRC" || fail "authored 1080px design canvas missing"
-grep -Fq 'setGeometry' "$SHELL_SRC" || fail "explicit geometry scaling missing"
+grep -Fq 'BASE_W = 1672' "$SHELL_SRC" || fail "approved 1672px MechScope reference canvas missing"
+grep -Fq 'BASE_H = 941' "$SHELL_SRC" || fail "approved 941px MechScope reference canvas missing"
+grep -Fq 'SYSTEM STATUS' "$SHELL_SRC" || fail "reference System Status surface missing"
+grep -Fq 'RECENT GAMES' "$SHELL_SRC" || fail "reference Recent Games surface missing"
+grep -Fq 'QUICK ACTIONS' "$SHELL_SRC" || fail "reference Quick Actions surface missing"
+grep -Fq 'QUICK MODES' "$SHELL_SRC" || fail "reference Quick Modes surface missing"
+grep -Fq 'MechScope 2.0' "$SHELL_SRC" || fail "reference hero title missing"
+grep -Fq 'QRadialGradient' "$SHELL_SRC" || fail "reference hero planet/glow treatment missing"
+grep -Fq 'setGeometry' "$SHELL_SRC" || fail "explicit reference geometry scaling missing"
+grep -Fq 'font_sizes' "$SHELL_SRC" || fail "MechScope typography scaling missing"
 if grep -Eq '(^|[^A-Za-z0-9_])Q(HBox|VBox|Grid)Layout[[:space:]]*\(' "$SHELL_SRC"; then
   fail "source-owned MechScope shell regressed to nested Qt layout construction"
 fi
@@ -42,4 +49,4 @@ fi
 
 grep -Fq 'mechos-native-ui-shell-integration.sh' "$PATCHER" || fail "source-owned shell is not wired as final Reference v5 authority"
 
-echo '[validate-native-ui-shell] OK: source-owned MechScope shell uses safe runtime overrides and true fullscreen startup'
+echo '[validate-native-ui-shell] OK: MechScope uses approved 1672x941 reference composition, safe runtime overrides and true fullscreen startup'

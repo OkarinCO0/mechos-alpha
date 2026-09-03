@@ -30,7 +30,9 @@ class PerformanceShell(FixedCanvas):
         cards=[]
         for name,x in names:
             self.label(name,QRect(x,164,190,34),12,True,'muted')
-            m=self.reg(MetricLabel('--'),QRect(x,202,190,92)); m.setStyleSheet('font-size:34px;font-weight:900;color:#edf4ff;background:transparent;border:0'); cards.append(m)
+            m=self.reg(MetricLabel('--'),QRect(x,202,190,92),34)
+            m.setStyleSheet('font-weight:900;color:#edf4ff;background:transparent;border:0')
+            f=m.font(); f.setPointSize(34); f.setBold(True); m.setFont(f); cards.append(m)
         self.cpu_card,self.ram_card,self.disk_card,self.zram_card=cards
         self.gpu_summary=self.label('Detected GPU',QRect(922,314,600,48),14,True,'accent')
         self.button('GPU Diagnostics','Vulkan / VA-API / driver information',QRect(1538,310,300,64),self.act('gpu'))
