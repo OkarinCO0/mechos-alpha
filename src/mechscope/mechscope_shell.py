@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
-"""Source-owned MechScope visual composition.
+"""Reference-authored MechScope 2.0 visual composition.
 
-This module deliberately owns only visual composition. Runtime actions are
-passed in from the MechScope backend so ISO integration scripts cannot keep
-rebuilding the screen with competing QHBoxLayout/QVBoxLayout patches.
+The approved MechScope reference is 1672x941. This source uses the same authored
+coordinate system and keeps a single aspect-preserving scale so the installed
+system, Gamescope and VM fallback all retain the same composition.
 """
-
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, Iterable
 
 from PyQt6.QtCore import QRect, Qt
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPen, QPixmap, QRadialGradient
 from PyQt6.QtWidgets import QLabel, QPushButton, QWidget
+
+BASE_W = 1672
+BASE_H = 941
 
 
 class Gauge(QWidget):
-    def __init__(self, title: str, accent: str, parent: QWidget | None = None):
+    def __init__(self, title: str, accent: str, parent=None):
         super().__init__(parent)
         self.title = title
         self.accent = QColor(accent)
-        self.value: int | None = None
+        self.value = None
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
     def setValue(self, value):
         try:
@@ -32,216 +36,208 @@ class Gauge(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        side = max(24, min(self.width(), self.height()) - 16)
-        inset = max(0, (self.width() - side) // 2)
-        rect = self.rect().adjusted(inset, 8, -inset, -8)
-        arc = rect.adjusted(5, 5, -5, -5)
-        pen_width = max(3, int(min(self.width(), self.height()) / 20))
-        base = QPen(QColor('#1c2941'), pen_width)
+        side = min(self.width(), self.height()) - 12
+        x = (self.width() - side) // 2
+        arc = QRect(x + 6, 8, side - 12, side - 12)
+        width = max(5, int(side * .075))
+        base = QPen(QColor('#202a37'), width)
         base.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(base)
         p.drawArc(arc, 90 * 16, -360 * 16)
         if self.value is not None:
-            active = QPen(self.accent, pen_width)
+            active = QPen(self.accent, width)
             active.setCapStyle(Qt.PenCapStyle.RoundCap)
             p.setPen(active)
             p.drawArc(arc, 90 * 16, -int(360 * 16 * self.value / 100))
-        p.setPen(QColor('#dce7ff'))
-        f = QFont('Sans Serif', max(7, int(self.height() / 16)), QFont.Weight.Bold)
+        p.setPen(QColor('#eef5ff'))
+        f = QFont('Sans Serif', max(8, int(self.height() * .095)))
         p.setFont(f)
-        p.drawText(rect.adjusted(0, 10, 0, 0), Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter, self.title)
-        f.setPointSize(max(11, int(self.height() / 8)))
+        p.drawText(QRect(0, int(self.height()*.28), self.width(), 24), Qt.AlignmentFlag.AlignCenter, self.title)
+        f.setPointSize(max(13, int(self.height() * .18)))
+        f.setBold(True)
         p.setFont(f)
-        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, '--' if self.value is None else f'{self.value}%')
+        p.drawText(QRect(0, int(self.height()*.43), self.width(), 40), Qt.AlignmentFlag.AlignCenter,
+                   '--' if self.value is None else f'{self.value}%')
 
 
 class MechScopeShell(QWidget):
-    """Stable 16:9 visual shell using explicit authored geometry.
-
-    The shell scales from a 1920x1080 design canvas. Major surfaces keep their
-    intended positions and proportions at any resolution instead of being
-    redistributed by Qt layout stretch factors.
-    """
-
-    BASE_W = 1920
-    BASE_H = 1080
-    RECENT_W = 1112
-    RECENT_H = 300
+    BASE_W = BASE_W
+    BASE_H = BASE_H
 
     def __init__(self, owner, actions: dict[str, Callable[[], None]], parent=None):
         super().__init__(parent)
         self.owner = owner
         self.actions = actions
-        self.widgets: list[QWidget] = []
-        self.design_rects: dict[QWidget, QRect] = {}
-        self.recent_rects: dict[QWidget, QRect] = {}
+        self.design_rects = {}
+        self.font_sizes = {}
+        self.recent_widgets = []
+        self.setObjectName('mechscopeReferenceShell')
+        self.setStyleSheet('''
+QWidget#mechscopeReferenceShell{background:#020711;color:#f4f7ff}
+QLabel[role="muted"]{color:#9aa9bf}
+QLabel[role="blue"]{color:#4b9cff}
+QLabel[role="purple"]{color:#a783ff}
+QPushButton[role="hero-blue"]{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #123b77,stop:1 #0e2b59);border:2px solid #2e8bff;border-radius:13px;color:white;text-align:left;padding:10px 18px;font-weight:800}
+QPushButton[role="hero-purple"]{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #34205e,stop:1 #4a216c);border:2px solid #9d58ee;border-radius:13px;color:white;text-align:left;padding:10px 18px;font-weight:800}
+QPushButton[role="hero-teal"]{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #113948,stop:1 #0d2634);border:2px solid #2bbab0;border-radius:13px;color:white;text-align:left;padding:10px 18px;font-weight:800}
+QPushButton[role="action"]{background:#111a29;border:1px solid #2a3b52;border-radius:10px;color:#f4f7ff;text-align:left;padding:7px 13px;font-weight:700}
+QPushButton[role="mode"]{background:#0d1727;border:1px solid #33445e;border-radius:12px;color:#f7f9ff;font-weight:800}
+QPushButton[role="mode-blue"]{background:#10284d;border:2px solid #318cff;border-radius:12px;color:white;font-weight:800}
+QPushButton[role="mode-purple"]{background:#281937;border:1px solid #7e3a91;border-radius:12px;color:white;font-weight:800}
+QPushButton[role="mode-teal"]{background:#0d2b2e;border:1px solid #247d7f;border-radius:12px;color:white;font-weight:800}
+QPushButton[role="mode-gold"]{background:#2a2115;border:1px solid #8d6324;border-radius:12px;color:white;font-weight:800}
+QPushButton[role="mode-red"]{background:#321519;border:1px solid #a13039;border-radius:12px;color:white;font-weight:800}
+QPushButton:hover,QPushButton:focus{border:3px solid #bba4ff}
+''')
         self._build()
 
-    def _register(self, widget: QWidget, rect: QRect):
-        widget.setParent(self)
-        self.widgets.append(widget)
-        self.design_rects[widget] = rect
+    def _scale(self):
+        if not self.width() or not self.height():
+            return 1.0
+        return min(self.width()/BASE_W, self.height()/BASE_H)
+
+    def _origin(self):
+        s = self._scale()
+        return int((self.width()-BASE_W*s)/2), int((self.height()-BASE_H*s)/2)
+
+    def _rect(self, r):
+        s = self._scale(); ox, oy = self._origin()
+        return QRect(ox+int(r.x()*s), oy+int(r.y()*s), max(1,int(r.width()*s)), max(1,int(r.height()*s)))
+
+    def _reg(self, widget, rect, font_size=None):
+        widget.setParent(self); self.design_rects[widget] = rect
+        if font_size is not None: self.font_sizes[widget] = font_size
         return widget
 
-    def _label(self, text: str, rect: QRect, size=14, bold=False, role='normal'):
-        label = self._register(QLabel(text), rect)
-        label.setWordWrap(True)
-        label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-        label.setProperty('role', role)
-        font = QFont('Sans Serif', size)
-        font.setBold(bold)
-        label.setFont(font)
-        return label
+    def _label(self, text, rect, size=14, bold=False, role='normal', align=None):
+        q = self._reg(QLabel(text), rect, size)
+        q.setWordWrap(True); q.setProperty('role', role)
+        q.setAlignment(align or (Qt.AlignmentFlag.AlignVCenter|Qt.AlignmentFlag.AlignLeft))
+        f = QFont('Sans Serif', size); f.setBold(bold); q.setFont(f)
+        return q
 
-    def _button(self, key: str, title: str, subtitle: str, rect: QRect, primary=False):
-        button = self._register(QPushButton(f'{title}\n{subtitle}'), rect)
-        button.setProperty('role', 'primary' if primary else 'action')
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        if key in self.actions:
-            button.clicked.connect(self.actions[key])
+    def _button(self, key, title, subtitle, rect, role='action', size=13):
+        text = title + (('\n'+subtitle) if subtitle else '')
+        q = self._reg(QPushButton(text), rect, size)
+        q.setProperty('role', role)
+        q.setCursor(Qt.CursorShape.PointingHandCursor)
+        f = QFont('Sans Serif', size); f.setBold(True); q.setFont(f)
+        fn = self.actions.get(key)
+        if fn: q.clicked.connect(fn)
         if hasattr(self.owner, 'focus_button'):
-            try:
-                self.owner.focus_button(button)
-            except Exception:
-                pass
-        return button
+            try: self.owner.focus_button(q)
+            except Exception: pass
+        return q
 
     def _build(self):
-        self.setObjectName('mechscopeNativeShell')
-        self.setStyleSheet('''
-QWidget#mechscopeNativeShell { background:#050912; color:#edf4ff; }
-QLabel[role="muted"] { color:#8da1bd; }
-QLabel[role="accent"] { color:#8b65ff; }
-QLabel[role="section"] { color:#6ddcff; letter-spacing:2px; }
-QPushButton[role="action"], QPushButton[role="primary"] {
-  color:#f4f8ff; text-align:left; padding:10px 14px; border-radius:14px;
-  background:#0c1422; border:1px solid #273a59; font-weight:700;
-}
-QPushButton[role="action"]:hover, QPushButton[role="action"]:focus {
-  border:2px solid #64dcff; background:#111d30;
-}
-QPushButton[role="primary"] {
-  border:2px solid #8d6aff;
-  background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #33205f,stop:1 #112a4b);
-}
-QPushButton[role="primary"]:hover, QPushButton[role="primary"]:focus { border:3px solid #b69aff; }
-''')
+        # Header exactly follows the approved reference structure.
+        self._label('◉  MECHOS', QRect(22,14,260,42), 20, True)
+        self._label('MECHSCOPE 2.0', QRect(660,13,370,44), 22, True, 'purple', Qt.AlignmentFlag.AlignCenter)
+        self.net_label = self._label('▥  NET detecting', QRect(1360,14,185,40), 12, False, 'muted', Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+        self.time_label = self._label('--:--', QRect(1553,14,96,40), 14, True, 'normal', Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
 
-        self._label('◉  MECHOS', QRect(42, 18, 320, 54), 20, True)
-        self._label('MECHSCOPE 2.0', QRect(760, 18, 400, 54), 24, True, 'accent')
-        self.net_label = self._label('NET  detecting', QRect(1510, 18, 190, 54), 12, True, 'muted')
-        self.time_label = self._label('--:--', QRect(1715, 18, 150, 54), 14, True)
+        # Hero copy / primary actions.
+        self._label('WELCOME TO', QRect(63,86,260,28), 12, True, 'blue')
+        self._label('MechScope 2.0', QRect(62,112,620,74), 36, True)
+        self._label('Your unified command center for gaming, performance, and creation.', QRect(63,190,650,44), 14, False)
+        self._button('steam','◉   Steam Library','Browse your games     ›',QRect(62,265,309,98),'hero-blue',14)
+        self._button('store','▰   Unified Store','All games, one place     ›',QRect(387,265,299,98),'hero-purple',14)
+        self._button('performance','◔   Performance Center','Optimize. Monitor. Dominate.     ›',QRect(703,265,314,98),'hero-teal',14)
 
-        self._label('WELCOME TO', QRect(74, 112, 420, 34), 13, True, 'accent')
-        self._label('MechScope 2.0', QRect(72, 148, 620, 68), 38, True)
-        self._label('Your unified command center for gaming, performance, and creation.', QRect(72, 218, 640, 58), 16, False, 'muted')
-        self._button('steam', 'Steam Library', 'Browse your games', QRect(72, 308, 300, 86), True)
-        self._button('store', 'Unified Store', 'All games, one place', QRect(388, 308, 300, 86))
-        self._button('performance', 'Performance Center', 'Optimize. Monitor. Dominate.', QRect(704, 308, 340, 86))
+        # Live system status replaces the static values shown in the concept.
+        self._label('SYSTEM STATUS', QRect(1093,82,280,30), 12, True, 'blue')
+        self.cpu_gauge = self._reg(Gauge('CPU','#3e85ff'), QRect(1100,119,128,128))
+        self.ram_gauge = self._reg(Gauge('RAM','#9b58f0'), QRect(1236,119,128,128))
+        self.disk_gauge = self._reg(Gauge('DISK','#31bbaa'), QRect(1372,119,128,128))
+        self.gpu_status = self._label('▣  GPU detecting', QRect(1104,264,300,28), 12, False, 'muted')
+        self.temp_label = self._label('♨  Temperature: sensor dependent', QRect(1104,291,310,28), 11, False, 'muted')
+        self._button('performance','⌁   Run Optimization','Open Performance Center     ›',QRect(1091,337,518,62),'action',12)
 
-        self._label('SYSTEM STATUS', QRect(1188, 112, 300, 34), 13, True, 'section')
-        self.cpu_gauge = self._register(Gauge('CPU', '#49deff'), QRect(1178, 150, 160, 160))
-        self.ram_gauge = self._register(Gauge('RAM', '#a85cff'), QRect(1348, 150, 160, 160))
-        self.disk_gauge = self._register(Gauge('DISK', '#258cff'), QRect(1518, 150, 160, 160))
-        self.gpu_status = self._label('GPU  detecting', QRect(1188, 318, 500, 42), 12, True, 'muted')
-        self.temp_label = self._label('Temperature: sensor dependent', QRect(1188, 360, 390, 34), 12, True, 'accent')
-        self._button('performance', 'Run Optimization', 'Open Performance Center', QRect(1588, 342, 250, 60))
+        # Recent games and quick actions.
+        self._label('RECENT GAMES', QRect(46,438,250,28), 12, True, 'blue')
+        self.recent_host = self._reg(QWidget(), QRect(43,474,1001,218))
+        self.recent_host.setStyleSheet('background:transparent')
+        self._label('QUICK ACTIONS', QRect(1116,438,250,28), 12, True, 'blue')
+        quick = [
+            ('updates','⇩   Update Center'),('drivers','▣   Drivers & Firmware'),
+            ('systeminfo','ⓘ   System Info'),('network','⌁   Network Manager'),
+            ('performance','ϟ   Power Plan')]
+        y = 470
+        for key,title in quick:
+            self._button(key,title,'›',QRect(1110,y,500,43),'action',11); y += 46
 
-        self._label('RECENT GAMES', QRect(72, 438, 350, 34), 13, True, 'section')
-        self.recent_host = self._register(QWidget(), QRect(72, 478, self.RECENT_W, self.RECENT_H))
-        self.recent_host.setStyleSheet('QWidget { background:#090f1b; border:1px solid #22334f; border-radius:16px; }')
-
-        self._label('QUICK ACTIONS', QRect(1218, 438, 290, 34), 13, True, 'section')
-        qa = [
-            ('updates', 'Update Center', 'Check system updates'),
-            ('drivers', 'Drivers & Firmware', 'GPU and device support'),
-            ('systeminfo', 'System Info', 'Hardware details'),
-            ('network', 'Network Manager', 'Connections and Wi‑Fi'),
-            ('performance', 'Power Plan', 'Performance profiles'),
+        # Bottom quick modes.
+        self._label('QUICK MODES', QRect(46,719,250,28), 12, True, 'blue')
+        modes = [
+            ('gaming','🎮  Gaming Mode',QRect(46,756,244,75),'mode-blue'),
+            ('desktop','▣  Desktop Mode',QRect(306,756,244,75),'mode'),
+            ('creator','✦  Creator Mode',QRect(566,756,244,75),'mode-purple'),
+            ('vr','◉  VR / SteamVR',QRect(826,756,244,75),'mode-teal'),
+            ('recovery','↶  Recovery',QRect(1086,756,244,75),'mode-gold'),
+            ('shutdown','⏻  Power',QRect(1350,756,244,75),'mode-red'),
         ]
-        y = 478
-        for key, title, sub in qa:
-            self._button(key, title, sub, QRect(1218, y, 620, 54))
-            y += 62
+        for key,title,rect,role in modes:
+            self._button(key,title,'',rect,role,13)
 
-        self._label('QUICK MODES', QRect(72, 814, 300, 34), 13, True, 'section')
-        self._button('gaming', 'Gaming Mode', 'Maximum performance', QRect(72, 854, 320, 78), True)
-        self._button('desktop', 'Desktop Mode', 'Productivity & browsing', QRect(408, 854, 320, 78))
-        self._button('creator', 'Creator Mode', 'Build. Edit. Publish.', QRect(744, 854, 320, 78))
-        self._button('vr', 'VR / SteamVR', 'Immersive experience', QRect(1080, 854, 320, 78))
-        self._button('recovery', 'Recovery', 'Repair & restore', QRect(1416, 854, 200, 78))
-        self._button('shutdown', 'Power', 'Restart / shut down', QRect(1632, 854, 206, 78))
-
-        self.pad_label = self._label('Controller: detecting', QRect(1440, 992, 398, 38), 12, True, 'muted')
-        self._label('Ⓐ Select     Ⓑ Back     ☰ Menu     ✥ D‑Pad / Arrows Navigate', QRect(72, 992, 940, 38), 12, False, 'muted')
+        self._label('Ⓐ  Select     Ⓑ  Back     ☰  Menu     ✥  D-Pad / Arrows  Navigate', QRect(22,875,890,42), 11, False, 'muted')
+        self.pad_label = self._label('🎮  Controller: detecting', QRect(1350,875,295,42), 11, False, 'muted', Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
 
     def set_recent_games(self, games: Iterable, launch_game: Callable):
-        for child in self.recent_host.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+        for child in list(self.recent_widgets):
             child.deleteLater()
-        self.recent_rects.clear()
+        self.recent_widgets.clear()
         games = list(games)[:5]
         if not games:
-            label = QLabel('No installed Steam games detected yet. Open Steam Library to sign in or install games.', self.recent_host)
-            label.setWordWrap(True)
-            label.setStyleSheet('color:#8da1bd;padding:20px;background:transparent;border:0;')
-            self.recent_rects[label] = QRect(20, 20, 1060, 80)
-            self._scale_recent()
-            return
-        card_w = 204
-        gap = 14
-        for i, game in enumerate(games):
-            title = getattr(game, 'name', None) or getattr(game, 'title', None) or str(game)
-            btn = QPushButton(str(title), self.recent_host)
-            self.recent_rects[btn] = QRect(18 + i * (card_w + gap), 18, card_w, 264)
-            btn.setStyleSheet('''QPushButton{background:#111a2a;border:1px solid #293f61;border-radius:14px;color:white;font-weight:800;padding:14px;} QPushButton:hover,QPushButton:focus{border:2px solid #66dcff;}''')
-            btn.clicked.connect(lambda _=False, g=game: launch_game(g))
-            if hasattr(self.owner, 'focus_button'):
-                try:
-                    self.owner.focus_button(btn)
-                except Exception:
-                    pass
-        self._scale_recent()
+            q = QLabel('No installed Steam games detected yet. Open Steam Library to sign in or install games.', self.recent_host)
+            q.setWordWrap(True); q.setStyleSheet('color:#95a6be;background:#0b1320;border:1px solid #24364f;border-radius:10px;padding:16px')
+            q.setGeometry(0,0,1000,210); self.recent_widgets.append(q); return
 
-    def _scale_recent(self):
-        if not self.recent_rects:
-            return
-        sx = self.recent_host.width() / self.RECENT_W if self.RECENT_W else 1.0
-        sy = self.recent_host.height() / self.RECENT_H if self.RECENT_H else 1.0
-        for widget, rect in self.recent_rects.items():
-            widget.setGeometry(
-                int(rect.x() * sx), int(rect.y() * sy),
-                max(1, int(rect.width() * sx)), max(1, int(rect.height() * sy)),
-            )
+        card_w = 190; gap = 12
+        for i, game in enumerate(games):
+            title = getattr(game,'name',None) or getattr(game,'title',None) or str(game)
+            btn = QPushButton(str(title), self.recent_host)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet('''QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #17273b,stop:.68 #0e1724,stop:1 #09111d);border:1px solid #2b405d;border-radius:10px;color:#f5f8ff;text-align:left;padding:142px 10px 10px 10px;font-weight:800} QPushButton:hover,QPushButton:focus{border:3px solid #6da7ff}''')
+            btn.clicked.connect(lambda _=False,g=game: launch_game(g))
+            btn.setGeometry(i*(card_w+gap),0,card_w,210)
+            # Use a local Steam artwork path when the backend supplies one.
+            for attr in ('grid_path','cover_path','artwork','image','header_image'):
+                p = getattr(game,attr,None)
+                if p and Path(str(p)).is_file():
+                    btn.setStyleSheet(btn.styleSheet()+f'QPushButton{{border-image:url("{str(p)}") 0 0 54 0 stretch stretch;}}')
+                    break
+            self.recent_widgets.append(btn)
+            if hasattr(self.owner,'focus_button'):
+                try:self.owner.focus_button(btn)
+                except Exception:pass
 
     def resizeEvent(self, event):
-        # Preserve the authored 16:9 composition and letterbox instead of letting
-        # independent layout stretch factors reshape the interface.
-        scale = min(self.width() / self.BASE_W, self.height() / self.BASE_H)
-        ox = int((self.width() - self.BASE_W * scale) / 2)
-        oy = int((self.height() - self.BASE_H * scale) / 2)
+        s = self._scale()
         for widget, rect in self.design_rects.items():
-            widget.setGeometry(
-                ox + int(rect.x() * scale),
-                oy + int(rect.y() * scale),
-                max(1, int(rect.width() * scale)),
-                max(1, int(rect.height() * scale)),
-            )
-        self._scale_recent()
+            widget.setGeometry(self._rect(rect))
+            base = self.font_sizes.get(widget)
+            if base is not None:
+                f = widget.font(); f.setPointSize(max(7,int(round(base*s)))); widget.setFont(f)
         super().resizeEvent(event)
 
+    def _panel(self, p, rect, fill='#07101b', border='#26374d', radius=14, width=1):
+        rr = self._rect(rect); s = self._scale()
+        p.setBrush(QColor(fill)); p.setPen(QPen(QColor(border),max(1,int(width*s))))
+        p.drawRoundedRect(rr,int(radius*s),int(radius*s))
+
     def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        scale = min(self.width()/self.BASE_W, self.height()/self.BASE_H)
-        ox = int((self.width() - self.BASE_W*scale)/2)
-        oy = int((self.height() - self.BASE_H*scale)/2)
-        hero = QRect(46, 92, 1810, 326)
-        r = QRect(ox+int(hero.x()*scale), oy+int(hero.y()*scale), int(hero.width()*scale), int(hero.height()*scale))
-        p.setBrush(QColor('#08111e'))
-        p.setPen(QPen(QColor('#3b2d68'), max(1, int(2*scale))))
-        p.drawRoundedRect(r, int(22*scale), int(22*scale))
-        p.setBrush(QColor('#070d16'))
-        p.setPen(QPen(QColor('#1f304a'), max(1, int(1*scale))))
-        for design in (QRect(46, 420, 1158, 378), QRect(1194, 420, 662, 378), QRect(46, 796, 1810, 158)):
-            dr = QRect(ox+int(design.x()*scale), oy+int(design.y()*scale), int(design.width()*scale), int(design.height()*scale))
-            p.drawRoundedRect(dr, int(18*scale), int(18*scale))
+        p = QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing,True)
+        p.fillRect(self.rect(),QColor('#020711'))
+        self._panel(p,QRect(23,64,1033,350),'#050c18','#24344c',14,1)
+        self._panel(p,QRect(1070,64,577,350),'#07101a','#263a50',14,1)
+        self._panel(p,QRect(23,427,1064,277),'#07101a','#26384e',14,1)
+        self._panel(p,QRect(1096,427,551,277),'#07101a','#26384e',14,1)
+        self._panel(p,QRect(23,716,1624,142),'#07101a','#26384e',14,1)
+
+        # Reference hero planet / space glow. It is decorative and intentionally
+        # drawn behind live controls so the same composition survives any GPU.
+        hero = self._rect(QRect(590,70,470,338))
+        grad = QRadialGradient(hero.right()-20,hero.center().y()+80,max(hero.width(),hero.height())*.72)
+        grad.setColorAt(0,QColor(65,105,255,130)); grad.setColorAt(.38,QColor(27,54,150,90)); grad.setColorAt(.72,QColor(9,17,45,30)); grad.setColorAt(1,QColor(0,0,0,0))
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(grad); p.drawEllipse(hero)
+        ring = QPen(QColor(92,125,255,190),max(1,int(3*self._scale()))); p.setPen(ring); p.setBrush(Qt.BrushStyle.NoBrush); p.drawArc(hero.adjusted(35,35,-20,-20),15*16,145*16)
