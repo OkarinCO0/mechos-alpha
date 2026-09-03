@@ -41,6 +41,9 @@ bash /workspace/scripts/mechos-reference-v5-creator-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-compat.sh
 bash /workspace/scripts/mechos-reference-v5-installer-layout.sh
+# Python 3.14/PyQt6 can abort if a Qt toggled callback raises. Initialize the
+# default Clean Install radio with signals blocked and guard future callbacks.
+bash /workspace/scripts/mechos-installer-radio-signal-hotfix.sh
 bash /workspace/scripts/mechos-live-installer-runtime-guard.sh
 # The reference installer remains the normal UI. If it terminates abnormally,
 # keep the Live environment installable through a separately confirmed safe
