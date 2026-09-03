@@ -15,9 +15,11 @@ needle = 'bash /workspace/scripts/mechos-current-integration.sh final\n\nmkarchi
 insert = '''bash /workspace/scripts/mechos-current-integration.sh final
 
 # MECHOS_REFERENCE_UI_V5_FINAL
-# The approved visual reference is the last UI authority. Repack the installed
-# payload after it so post-install and Live receive the same finished runtime.
+# The approved visual reference is the last UI authority. The richer Store v5
+# layout runs after all older store/theme patches, then the finished runtime is
+# repacked so post-install and Live receive the same UI.
 bash /workspace/scripts/mechos-reference-v5-integration.sh final
+bash /workspace/scripts/mechos-reference-v5-store-layout.sh
 bash /workspace/scripts/mechos-finalize-install-payload.sh final
 
 mkarchiso -v'''
