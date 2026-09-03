@@ -18,11 +18,14 @@ grep -Fq 'Exec=/usr/local/bin/mechos-mode-launch gaming' "$FIX"
 grep -Fq 'Creator-Mode.desktop' "$FIX"
 grep -Fq 'Return-to-MechScope.desktop' "$FIX"
 grep -Fq 'mode-shortcut.log' "$FIX"
+grep -Fq 'purge_legacy_shortcuts' "$FIX"
+grep -Fq 'mechos-return-to-mechscope.desktop' "$FIX"
+grep -Fq 'mechscope.desktop' "$FIX"
+grep -Fq 'mechos-return-gaming.desktop' "$FIX"
+grep -Fq 'patch_postinstall_shortcuts' "$FIX"
 
 grep -Fq 'mechos-vm-shortcut-launch-hotfix.sh' "$PATCHER"
 
-# Verify the final ISO patch chain installs the shortcut runtime after the VM
-# UI guard but before staged Creator Mode is committed into the final payload.
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 cp scripts/build-mechos-archiso.sh "$tmp"
@@ -48,4 +51,4 @@ if pos != sorted(pos):
 print('VM shortcut final build-order validation passed.')
 PY
 
-echo 'MechOS VM Creator/MechScope shortcut validation passed.'
+echo 'MechOS VM Creator/MechScope shortcut cleanup validation passed.'

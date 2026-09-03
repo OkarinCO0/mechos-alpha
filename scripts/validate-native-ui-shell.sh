@@ -18,8 +18,6 @@ bash -n "$INTEGRATION" || fail "native UI integration shell syntax failed"
 grep -Fq 'BASE_W = 1920' "$SHELL_SRC" || fail "authored 1920px design canvas missing"
 grep -Fq 'BASE_H = 1080' "$SHELL_SRC" || fail "authored 1080px design canvas missing"
 grep -Fq 'setGeometry' "$SHELL_SRC" || fail "explicit geometry scaling missing"
-# Reject actual nested layout construction/imports. Documentation may mention
-# the old layout classes while explaining why they were removed.
 if grep -Eq '(^|[^A-Za-z0-9_])Q(HBox|VBox|Grid)Layout[[:space:]]*\(' "$SHELL_SRC"; then
   fail "source-owned MechScope shell regressed to nested Qt layout construction"
 fi
@@ -27,9 +25,17 @@ if grep -Eq '^from PyQt6\.QtWidgets import .*Q(HBox|VBox|Grid)Layout' "$SHELL_SR
   fail "source-owned MechScope shell imports nested Qt layouts"
 fi
 
-grep -Fq 'MECHOS_SOURCE_OWNED_SHELL_V1' "$INTEGRATION" || fail "runtime source-shell marker missing"
+grep -Fq 'MECHOS_SOURCE_OWNED_SHELL_V2' "$INTEGRATION" || fail "safe runtime source-shell marker missing"
 grep -Fq 'MechScopeShell' "$INTEGRATION" || fail "runtime does not install MechScopeShell"
+grep -Fq 'MechScope.build_ui=_mechos_native_build_ui' "$INTEGRATION" || fail "safe build_ui runtime override missing"
+grep -Fq 'MechScope.refresh_stats=_mechos_native_refresh_stats' "$INTEGRATION" || fail "safe refresh_stats runtime override missing"
+if grep -Fq "text=replace_method(text,'build_ui'" "$INTEGRATION"; then
+  fail "unsafe generated-class method surgery returned"
+fi
+if grep -Fq "text=replace_method(text,'refresh_stats'" "$INTEGRATION"; then
+  fail "unsafe generated-class method surgery returned"
+fi
 
 grep -Fq 'mechos-native-ui-shell-integration.sh' "$PATCHER" || fail "source-owned shell is not wired as final Reference v5 authority"
 
-echo '[validate-native-ui-shell] OK: source-owned fixed-composition MechScope shell is wired and validated'
+echo '[validate-native-ui-shell] OK: source-owned fixed-composition MechScope shell uses safe runtime overrides'
