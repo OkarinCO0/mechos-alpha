@@ -50,13 +50,12 @@ bash /workspace/scripts/mechos-update-center-v2-integration.sh
 bash /workspace/scripts/mechos-installer-auto-reboot-hotfix.sh
 bash /workspace/scripts/mechos-installed-mechscope-launch-hotfix.sh
 bash /workspace/scripts/mechos-vm-mode-runtime-final.sh
-# FINAL FIRST-BOOT SESSION AUTHORITY. Before OOBE completion, installed systems
-# are forced into the temporary setup account/Plasma session and VM fullscreen
-# modes are blocked. After OOBE, normal MechScope/Creator routing resumes.
+# FIRST-BOOT SESSION AUTHORITY. Before OOBE completion, installed systems are
+# forced into the temporary setup account/Plasma session and VM fullscreen modes
+# are blocked. The final gate below reasserts this after payload finalization.
 bash /workspace/scripts/mechos-firstboot-session-authority.sh
-# FINAL VM APP FALLBACK. After the OOBE gate, MechScope and Creator first try
-# their user service and then fall back to direct launch in the same Plasma VM
-# graphical session if the user service cannot stay active.
+# VM APP FALLBACK. MechScope and Creator first try their user service and then
+# fall back to direct launch in the same Plasma VM graphical session.
 bash /workspace/scripts/mechos-vm-app-launch-final.sh
 # Install approved Plymouth artwork/theme first, then enforce the actual Live
 # ArchISO + native Clean Install boot chain that consumes it.
@@ -64,6 +63,11 @@ bash /workspace/scripts/mechos-reference-splash-integration.sh
 bash /workspace/scripts/mechos-plymouth-boot-final.sh
 bash /workspace/scripts/mechos-reference-v5-postinstall-stage.sh commit
 bash /workspace/scripts/mechos-finalize-install-payload.sh final
+# ABSOLUTE LAST INSTALLED-PAYLOAD AUTHORITY. Nothing after this command may
+# replace OOBE, updater, mode-switch shortcuts or Creator geometry. It fixes the
+# exact VM + physical-hardware problems found during v0.3.0 testing and fails the
+# build if any of those invariants are missing.
+bash /workspace/scripts/mechos-new-build-final-gate.sh
 '''
 
 text = text[:pos] + insert + text[pos:]
