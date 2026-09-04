@@ -28,7 +28,7 @@ grep -Fq 'self.update_count=total' "$INTEGRATION" || fail "reliable update_count
 grep -Fq 'self.update_button.setEnabled(total > 0)' "$INTEGRATION" || fail "Install button enable rule missing"
 grep -Fq '_mechos_v2_original_apply_updates' "$INTEGRATION" || fail "existing privileged apply path not preserved"
 grep -Fq 'No installable update is currently selected' "$INTEGRATION" || fail "dead-click guard missing"
-grep -Fq 'allowed_parents' "$INTEGRATION" || fail "archive parent-directory compatibility missing"
+grep -Fq 'parents=set()' "$INTEGRATION" || fail "archive parent-directory compatibility missing"
 grep -Fq 'mechos-update-center-v2-integration.sh' "$PATCHER" || fail "v2 integration is not wired into final build chain"
 
 python3 - "$PATCHER" <<'PY'
