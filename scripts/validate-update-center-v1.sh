@@ -21,7 +21,7 @@ bash -n "$GUARD" || fail "Update Center v1 runtime guard syntax failed"
 python3 -m py_compile "$PATCHER" "$SOURCE_UI" || fail "Update Center v1 Python source syntax failed"
 
 python3 - "$MANIFEST" "$RELEASE" <<'PY'
-import json,re,sys
+import json,re,subprocess,sys
 from urllib.parse import urlparse
 manifest,release=sys.argv[1:]
 with open(manifest,encoding='utf-8') as f: data=json.load(f)
@@ -31,10 +31,15 @@ version=str(data.get('version','')).strip()
 if not re.fullmatch(r'[0-9]+(?:\.[0-9]+){2}(?:[-.][A-Za-z0-9]+)*',version):
     raise SystemExit('[validate-update-center-v1] invalid stable manifest version')
 current=open(release,encoding='utf-8').read().strip()
-if version != current:
-    raise SystemExit(f'[validate-update-center-v1] initial stable manifest {version} must match ISO release {current}')
+if not re.fullmatch(r'[0-9]+(?:\.[0-9]+){2}(?:[-.][A-Za-z0-9]+)*',current):
+    raise SystemExit('[validate-update-center-v1] invalid ISO release version')
+ordered=subprocess.check_output(['sort','-V'],input=f'{current}\n{version}\n',text=True).splitlines()
+if ordered[-1] != version:
+    raise SystemExit(f'[validate-update-center-v1] stable manifest {version} must not be older than ISO release {current}')
 url=str(data.get('bundle_url','')).strip(); sha=str(data.get('bundle_sha256','')).strip()
 if bool(url) != bool(sha): raise SystemExit('[validate-update-center-v1] bundle URL/SHA must be published together')
+if version != current and (not url or not sha):
+    raise SystemExit('[validate-update-center-v1] a newer stable version must publish its HTTPS bundle and SHA together')
 if url:
     u=urlparse(url)
     if u.scheme != 'https' or not u.netloc: raise SystemExit('[validate-update-center-v1] bundle URL must be HTTPS')
