@@ -4,6 +4,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UI="$ROOT/src/mechos_ui"
 INTEGRATION="$ROOT/scripts/mechos-source-owned-system-ui.sh"
 PATCHER="$ROOT/scripts/patch-mechos-reference-v5.py"
+INSTALLER_FALLBACK="$ROOT/scripts/mechos-live-installer-crash-fallback.sh"
 CREATOR_REF="$ROOT/branding/mechos-creator-mode-reference.png"
 INSTALLER_REF="$ROOT/branding/mechos-installer-reference.png"
 fail(){ echo "[validate-source-system-ui] ERROR: $*" >&2; exit 1; }
@@ -11,17 +12,21 @@ fail(){ echo "[validate-source-system-ui] ERROR: $*" >&2; exit 1; }
 [ -d "$UI" ] || fail "src/mechos_ui missing"
 [ -f "$INTEGRATION" ] || fail "system UI integration missing"
 [ -f "$PATCHER" ] || fail "reference v5 patcher missing"
+[ -f "$INSTALLER_FALLBACK" ] || fail "Live installer crash fallback missing"
 [ -s "$CREATOR_REF" ] || fail "approved Creator Mode reference artwork missing"
 [ -s "$INSTALLER_REF" ] || fail "approved Installer reference artwork missing"
 bash -n "$INTEGRATION" || fail "integration shell syntax failed"
 
-# `bash -n` does not catch nounset expansion ordering.
+# `bash -n` does not catch nounset expansion ordering or resolver drift.
 if grep -Eq 'local[[:space:]]+tree="\$1".*name="\$2".*public=.*\$name' "$INTEGRATION"; then
   fail "unsafe dependent local assignment can fail under set -u"
 fi
 grep -Fq 'local tree="$1"' "$INTEGRATION" || fail "owner_file tree assignment missing"
 grep -Fq 'local name="$2"' "$INTEGRATION" || fail "owner_file name assignment missing"
 grep -Fq 'local public="$tree/usr/local/bin/$name"' "$INTEGRATION" || fail "owner_file public assignment missing"
+grep -Fq 'local libexec_v5="$tree/usr/local/libexec/${name}-v5.py"' "$INTEGRATION" || fail "owner_file v5 libexec fallback missing"
+grep -Fq 'grep -Fq "class $cls(" "$libexec_v5"' "$INTEGRATION" || fail "owner_file does not inspect v5 libexec implementation"
+grep -Fq 'REAL="$ROOT/usr/local/libexec/mechos-live-setup-v5.py"' "$INSTALLER_FALLBACK" || fail "Live installer fallback real-owner path changed unexpectedly"
 
 python3 -m py_compile \
   "$UI/fixed_canvas.py" \
@@ -114,4 +119,4 @@ if min(a,b,c,d)<0 or not (a < b < c < d):
     raise SystemExit('[validate-source-system-ui] final source UI must run after runtime hotfixes and before splash/postinstall commit')
 PY
 
-echo '[validate-source-system-ui] OK: Creator and Installer use approved raster references; MechScope/Quick/OOBE/system surfaces use source-owned aspect-preserving final GUI authority'
+echo '[validate-source-system-ui] OK: Creator and Installer use approved raster references; Live Installer resolver follows the guarded v5 libexec owner; MechScope/Quick/OOBE/system surfaces use source-owned aspect-preserving final GUI authority'
