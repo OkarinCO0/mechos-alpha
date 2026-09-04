@@ -34,6 +34,7 @@ jobs:
           bash scripts/validate-native-ui-shell.sh
           bash scripts/validate-auto-optimization.sh
           bash scripts/validate-source-owned-system-ui.sh
+          bash scripts/validate-live-installer-owner.sh
           bash scripts/validate-reference-splash.sh
           bash scripts/validate-live-installer-runtime-guard.sh
           bash scripts/validate-live-update-pacman-sandbox.sh
