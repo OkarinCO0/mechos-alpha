@@ -2,6 +2,17 @@ name: Build MechOS Arch ISO
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/mechos-new-build-final-gate.sh'
+      - 'scripts/patch-mechos-reference-v5.py'
+      - 'scripts/validate-new-build-final-gate.sh'
+      - 'overlay/rootfs/etc/mechos/release'
+      - 'overlay/rootfs/etc/mechos/mechos.conf'
+      - 'overlay/rootfs/etc/system-release'
+      - '.github/workflows/build-mechos.yml'
 
 permissions:
   contents: read
