@@ -17,9 +17,10 @@ class UpdateShell(FixedCanvas):
 
         self.label('YOUR SYSTEM IS',QRect(74,116,310,32),13,True,'section')
         self.status_label=self.label('Checking…',QRect(72,152,600,68),34,True)
-        self.details_label=self.label('Checking MechOS, Arch and Flatpak update state',QRect(72,220,720,60),14,False,'muted')
-        self.check_button=self.button('Check for Updates','Scan system packages, Flatpaks and MechOS metadata',QRect(72,310,350,82),self.act('check'),True)
-        self.update_button=self.button('Install Updates','Install all available updates',QRect(438,310,330,82),self.act('install'))
+        self.details_label=self.label('Checking MechOS, Arch and Flatpak update state',QRect(72,220,720,54),14,False,'muted')
+        self.version_label=self.label('CURRENT  checking…    •    LATEST  checking…',QRect(72,278,720,28),11,True,'accent')
+        self.check_button=self.button('Check for Updates','Scan MechOS, system packages and Flatpaks',QRect(72,310,350,82),self.act('check'),True)
+        self.update_button=self.button('Install Updates','Install all verified available updates',QRect(438,310,330,82),self.act('install'))
         self.update_button.setEnabled(False)
 
         self.label('SYSTEM HEALTH',QRect(938,116,300,32),13,True,'section')
@@ -31,7 +32,7 @@ class UpdateShell(FixedCanvas):
         self.button('Creator Mode','Creator tools and packages',QRect(1634,310,220,82),self.act('creator'))
 
         self.label('UPDATE CATEGORIES',QRect(72,450,370,34),13,True,'section')
-        cats=[('SYSTEM UPDATES','Core OS and runtime'),('DRIVERS & FIRMWARE','Hardware support'),('MECHOS HOTFIXES','Stability & fixes'),('CREATOR PACKAGES','Tools & dependencies'),('STORE METADATA','Catalog & profiles')]
+        cats=[('MECHOS RELEASE','Verified OS bundle'),('SYSTEM UPDATES','Arch packages'),('DRIVERS & FIRMWARE','Hardware support'),('CREATOR PACKAGES','Tools & dependencies'),('FLATPAKS','Desktop applications')]
         for i,(title,sub) in enumerate(cats):
             x=72+i*350
             self.label(title,QRect(x,502,320,34),11,True,'accent')
@@ -42,13 +43,13 @@ class UpdateShell(FixedCanvas):
         self.history_button=self.button('Refresh History','Reload completed update records',QRect(72,728,300,68),self.act('history'))
 
         self.label('CHANGELOG / UPDATE OUTPUT',QRect(838,622,450,34),13,True,'section')
-        self.log=self.reg(QPlainTextEdit(),QRect(838,666,1016,230)); self.log.setReadOnly(True); self.log.setPlaceholderText('Update information will appear here.')
+        self.log=self.reg(QPlainTextEdit(),QRect(838,666,1016,230)); self.log.setReadOnly(True); self.log.setPlaceholderText('MechOS release notes and update information will appear here.')
         self.log.setStyleSheet('QPlainTextEdit{background:#060b13;border:1px solid #253a58;border-radius:14px;padding:12px;color:#c9d7ed;font-family:Monospace}')
 
         self.label('UPDATE HISTORY',QRect(72,840,360,34),13,True,'section')
         self.history=self.reg(QPlainTextEdit(),QRect(72,884,720,112)); self.history.setReadOnly(True)
         self.history.setStyleSheet('QPlainTextEdit{background:#060b13;border:1px solid #253a58;border-radius:14px;padding:10px;color:#aebed6;font-family:Monospace}')
-        self.label('Snapshots protect compatible Btrfs systems before major package changes.',QRect(838,918,1016,50),12,False,'muted')
+        self.label('MechOS release bundles require HTTPS + SHA-256 verification. Compatible Btrfs systems get a pre-update Snapper snapshot.',QRect(838,918,1016,50),12,False,'muted')
     def paint_background(self,p):
         self.panel(p,QRect(46,94,786,322),'#08111e','#3b2d68',22,2)
         self.panel(p,QRect(860,94,996,322),'#07101c','#254465',22,1)
