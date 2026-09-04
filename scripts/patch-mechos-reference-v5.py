@@ -11,17 +11,10 @@ marker = '# MECHOS_REFERENCE_UI_V5_FINAL'
 if marker in text:
     raise SystemExit(0)
 
-# Insert immediately before the final ArchISO build command. Older cumulative
-# patchers are allowed to add any number of integration lines above mkarchiso,
-# so do not depend on an exact two-line relationship with current-integration.
 anchor = '\nmkarchiso -v \\\n'
 pos = text.rfind(anchor)
 if pos < 0:
     raise SystemExit('[MechOS Reference UI v5] final mkarchiso insertion point not found')
-
-# Sanity-check that the current late integration stage exists before the final
-# build. This protects against accidentally inserting v5 into an unrelated
-# script that merely happens to invoke mkarchiso.
 late = text.rfind('# MECHOS_CURRENT_INTEGRATION_LATE', 0, pos)
 if late < 0:
     raise SystemExit('[MechOS Reference UI v5] current late integration stage not found before mkarchiso')
@@ -29,74 +22,35 @@ if late < 0:
 insert = '''
 
 # MECHOS_REFERENCE_UI_V5_FINAL
-# The approved visual reference is the last legacy UI pass. Creator Mode and
-# Quick Actions remain post-install-only: they are temporarily materialized
-# from the install payload for patching, captured back into the payload, and
-# removed from Live before mkarchiso.
 bash /workspace/scripts/mechos-reference-v5-postinstall-stage.sh prepare
 bash /workspace/scripts/mechos-reference-v5-integration.sh final
 bash /workspace/scripts/mechos-reference-v5-store-layout.sh
 bash /workspace/scripts/mechos-reference-v5-mechscope-layout.sh
-# Legacy compatibility pass. It may provide runtime helpers, but the actual
-# MechScope composition is replaced by the source-owned shell below.
 bash /workspace/scripts/mechos-reference-v5-mechscope-exact-layout.sh
 bash /workspace/scripts/mechos-reference-v5-creator-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-layout.sh
 bash /workspace/scripts/mechos-reference-v5-controls-compat.sh
-# Add the native MechOS AUR helper after Update Center's final reference layout
-# exists, so its AUR Packages entry cannot be overwritten by an earlier UI pass.
 bash /workspace/scripts/mechos-aur-helper-integration.sh
 bash /workspace/scripts/mechos-reference-v5-installer-layout.sh
-# Keep-Home Live Update runs against an installed root from the Live image.
-# Repair Pacman 7+ DownloadUser/sandbox prerequisites before its online package
-# refresh and keep a one-invocation chroot-only sandbox fallback available.
 bash /workspace/scripts/mechos-live-update-pacman-sandbox-hotfix.sh
-# Python 3.14/PyQt6 can abort if a Qt toggled callback raises. Initialize the
-# default Clean Install radio with signals blocked and guard future callbacks.
 bash /workspace/scripts/mechos-installer-radio-signal-hotfix.sh
 bash /workspace/scripts/mechos-live-installer-runtime-guard.sh
-# The reference installer remains the normal UI. If it terminates abnormally,
-# keep the Live environment installable through a separately confirmed safe
-# fallback that uses the same native MechOS install backends.
 bash /workspace/scripts/mechos-live-installer-crash-fallback.sh
-# VM behavior is applied before final visual authority so it can change
-# rendering policy without being allowed to redesign the authored shell.
 bash /workspace/scripts/mechos-vm-ui-runtime-guard.sh
-# Desktop and application-menu mode shortcuts share one entrypoint. It imports
-# the active graphical environment into systemd --user and applies VM-only
-# rendering/Gamescope flags before the persistent mode service is started.
 bash /workspace/scripts/mechos-vm-shortcut-launch-hotfix.sh
-# FINAL MECHSCOPE VISUAL AUTHORITY. This installs the repository-owned approved
-# reference composition after generated/reference/VM layout passes.
 bash /workspace/scripts/mechos-native-ui-shell-integration.sh
-# FINAL PERFORMANCE RUNTIME AUTHORITY. Auto Optimization must never assume that
-# a physical `performance` power profile exists; VirtualBox and some real
-# hardware expose only balanced or no platform profile at all.
 bash /workspace/scripts/mechos-auto-optimization-hotfix.sh
-# FINAL SYSTEM UI AUTHORITY. Creator Mode, Quick Actions, Performance Center,
-# Update Center, Recovery, Installer and OOBE use repository-owned visual modules.
 bash /workspace/scripts/mechos-source-owned-system-ui.sh
-# Update Center v1 supplies the verified stable channel, helper, snapshots,
-# package/Flatpak update engine and rollback markers.
 bash /workspace/scripts/mechos-update-center-v1-integration.sh
 bash /workspace/scripts/mechos-update-center-v1-runtime-guard.sh
-# FINAL UPDATE CENTER VISUAL/RUNTIME AUTHORITY. v2 fixes install-button state,
-# safe archive parent directories and presents the updater as a native MechOS
-# system console instead of the old developer utility layout.
 bash /workspace/scripts/mechos-update-center-v2-integration.sh
-# FINAL INSTALL SUCCESS POLICY. Only a successful archinstall return reaches
-# this countdown; failed or cancelled installs remain safely in the Live image.
 bash /workspace/scripts/mechos-installer-auto-reboot-hotfix.sh
-# FINAL INSTALLED MECHSCOPE SESSION AUTHORITY. Correct the OOBE SDDM handoff,
-# force the permanent account into Gaming Mode and install the canonical session.
 bash /workspace/scripts/mechos-installed-mechscope-launch-hotfix.sh
-# FINAL VM MODE AUTHORITY. Virtual machines keep Plasma as their compositor and
-# launch MechScope/Creator only after the graphical session is ready. Physical
-# hardware keeps the normal Gamescope controller path.
 bash /workspace/scripts/mechos-vm-mode-runtime-final.sh
-# FINAL BOOT SPLASH AUTHORITY. Use the approved reference artwork directly in
-# Plymouth instead of reconstructing it from the older logo/text animation.
+# Install approved Plymouth artwork/theme first, then enforce the actual Live
+# ArchISO + native Clean Install boot chain that consumes it.
 bash /workspace/scripts/mechos-reference-splash-integration.sh
+bash /workspace/scripts/mechos-plymouth-boot-final.sh
 bash /workspace/scripts/mechos-reference-v5-postinstall-stage.sh commit
 bash /workspace/scripts/mechos-finalize-install-payload.sh final
 '''
