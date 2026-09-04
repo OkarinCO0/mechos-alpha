@@ -11,6 +11,23 @@ trap 'rc=$?; printf "[MechOS Installed MechScope Launch] ERROR line %s: %s (exit
 [ -d "$ROOT" ] || fail "ArchISO rootfs missing"
 [ -s "$ARCHIVE" ] || fail "installed-system payload missing"
 
+install_session_entry(){
+  local tree="$1"
+  local target="$tree/usr/share/wayland-sessions/mechscope.desktop"
+  mkdir -p "$(dirname "$target")"
+  cat > "$target" <<'EOF'
+[Desktop Entry]
+Name=MechScope
+Comment=MechOS Gamescope + Steam Gaming Mode
+Exec=/usr/local/bin/mechscope-session
+TryExec=/usr/local/bin/mechscope-session
+Type=Application
+DesktopNames=MechScope
+EOF
+  chmod 644 "$target"
+  grep -Fq 'Exec=/usr/local/bin/mechscope-session' "$target" || fail "MechScope session entry validation failed in $tree"
+}
+
 install_session_wrapper(){
   local tree="$1"
   local target="$tree/usr/local/bin/mechscope-session"
@@ -164,7 +181,10 @@ PY
 
 patch_tree(){
   local tree="$1"
-  [ -f "$tree/usr/share/wayland-sessions/mechscope.desktop" ] || fail "mechscope.desktop missing from $tree"
+  # The live root and the installed payload are assembled at different stages.
+  # Always install the canonical Wayland session into both trees instead of
+  # assuming the payload inherited the Live overlay copy.
+  install_session_entry "$tree"
   install_session_wrapper "$tree"
   patch_oobe_handoff "$tree"
 }
@@ -181,4 +201,4 @@ mv -f "$replacement" "$ARCHIVE"
 rm -rf "$tmp"
 trap - EXIT
 
-log 'Installed MechScope now uses the real SDDM session, forces initial Gaming Mode, bypasses Gamescope in VMs, and falls back to Plasma if Gamescope fails'
+log 'Installed MechScope session entry and launcher are present in Live and installed payload; SDDM uses the real session, initial Gaming Mode is forced, VMs bypass Gamescope, and hardware falls back to Plasma if Gamescope fails'

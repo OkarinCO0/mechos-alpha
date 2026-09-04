@@ -20,6 +20,14 @@ python3 -m py_compile "$PATCHER" || fail "reference-v5 patcher syntax failed"
 
 grep -Fq 'Exec=/usr/local/bin/mechscope-session' "$SESSION" || fail "MechScope session does not call mechscope-session"
 
+# The final launcher stage must explicitly install the session entry into both
+# the Live tree and the extracted installed payload. Build #94 proved that the
+# payload does not always inherit the Live overlay copy.
+grep -Fq 'install_session_entry(){' "$HOTFIX" || fail "installed payload session-entry writer missing"
+grep -Fq 'usr/share/wayland-sessions/mechscope.desktop' "$HOTFIX" || fail "MechScope session target path missing from final launcher stage"
+grep -Fq 'Exec=/usr/local/bin/mechscope-session' "$HOTFIX" || fail "final launcher stage does not write the canonical MechScope Exec target"
+grep -Fq 'install_session_entry "$tree"' "$HOTFIX" || fail "MechScope session entry is not installed for every patched tree"
+
 # The generated OOBE has historically used more than one gaming-session name.
 # The final authority must normalize any Session=<name>.desktop assignment to
 # the only shipped MechScope session instead of depending on one legacy string.
@@ -56,4 +64,4 @@ if pos != sorted(pos):
     raise SystemExit('[validate-installed-mechscope-launch] installed launch hotfix is in the wrong final build order')
 PY
 
-echo '[validate-installed-mechscope-launch] OK: installed SDDM normalization, Gaming Mode state, VM bypass and Gamescope failure fallback are enforced'
+echo '[validate-installed-mechscope-launch] OK: session entry is installed into Live and payload; SDDM normalization, Gaming Mode state, VM bypass and Gamescope failure fallback are enforced'
