@@ -20,12 +20,16 @@ install_sources(){
 
 owner_file(){
   # Keep dependent local assignments separate under `set -u`.
+  # Some guarded apps move their real Python implementation to libexec rather
+  # than using the historical /usr/local/bin/<name>.real convention.
   local tree="$1"
   local name="$2"
   local cls="$3"
   local public="$tree/usr/local/bin/$name"
+  local libexec_v5="$tree/usr/local/libexec/${name}-v5.py"
   if [ -f "$public" ] && grep -Fq "class $cls(" "$public"; then printf '%s\n' "$public"; return 0; fi
   if [ -f "$public.real" ] && grep -Fq "class $cls(" "$public.real"; then printf '%s\n' "$public.real"; return 0; fi
+  if [ -f "$libexec_v5" ] && grep -Fq "class $cls(" "$libexec_v5"; then printf '%s\n' "$libexec_v5"; return 0; fi
   return 1
 }
 
