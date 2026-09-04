@@ -81,6 +81,9 @@ bash /workspace/scripts/mechos-source-owned-system-ui.sh
 # markers are installed after the visual shell so older updater logic cannot win.
 bash /workspace/scripts/mechos-update-center-v1-integration.sh
 bash /workspace/scripts/mechos-update-center-v1-runtime-guard.sh
+# FINAL INSTALL SUCCESS POLICY. Only a successful archinstall return reaches
+# this countdown; failed or cancelled installs remain safely in the Live image.
+bash /workspace/scripts/mechos-installer-auto-reboot-hotfix.sh
 # FINAL INSTALLED MECHSCOPE SESSION AUTHORITY. Correct the OOBE SDDM handoff,
 # force the permanent account into Gaming Mode, bypass Gamescope in VMs, and
 # retry through Plasma when Gamescope cannot start on physical hardware.

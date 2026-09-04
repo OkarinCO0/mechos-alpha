@@ -14,7 +14,11 @@ grep -Fq 'Image("mechos-splash-reference.png")' "$INTEGRATION" || fail "Plymouth
 grep -Fq 'reference.original.Scale' "$INTEGRATION" || fail "reference image is not scaled for the active display"
 grep -Fq 'scale.y < scale.x' "$INTEGRATION" || fail "aspect-preserving letterbox logic missing"
 grep -Fq 'Theme=mechos' "$INTEGRATION" || fail "Plymouth theme selection missing"
-grep -Fq 'MECHOS_REFERENCE_SPLASH_POSTINSTALL_V1' "$INTEGRATION" || fail "installed-system splash reassertion missing"
+grep -Fq 'MECHOS_REFERENCE_SPLASH_POSTINSTALL_V2' "$INTEGRATION" || fail "installed-system splash v2 reassertion missing"
+grep -Fq 'grep -qw plymouth' "$INTEGRATION" || fail "installed mkinitcpio Plymouth-hook check missing"
+grep -Fq 'quiet splash loglevel=3' "$INTEGRATION" || fail "installed kernel splash command line enforcement missing"
+grep -Fq '/etc/kernel/cmdline' "$INTEGRATION" || fail "systemd-boot/kernel-install splash path missing"
+grep -Fq '/etc/default/grub' "$INTEGRATION" || fail "GRUB splash path missing"
 grep -Fq 'mkinitcpio -P' "$INTEGRATION" || fail "installed initramfs refresh missing"
 grep -Fq 'mechos-reference-splash-integration.sh' "$PATCHER" || fail "reference splash is not wired into final build chain"
 python3 - "$PATCHER" <<'PY'
@@ -28,4 +32,4 @@ if min(a,b,c)<0 or not (a < b < c):
     raise SystemExit('[validate-reference-splash] splash must be final visual authority before postinstall commit')
 PY
 
-echo '[validate-reference-splash] OK: approved mechos-splash-reference.png is final Plymouth boot visual authority'
+echo '[validate-reference-splash] OK: approved PNG, Plymouth theme, installed initramfs hook and systemd-boot/GRUB splash command lines are enforced'

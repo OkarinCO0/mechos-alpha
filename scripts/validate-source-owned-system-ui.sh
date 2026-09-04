@@ -61,12 +61,16 @@ grep -Fq 'self.owner.nav = []' "$UI/creator_shell.py" || fail "legacy Creator si
 if grep -Fq 'CreatorDashboard' "$UI/creator_shell.py"; then fail "legacy recreated Creator dashboard still present"; fi
 grep -Fq 'Back to MechScope' "$UI/creator_shell.py" || fail "Creator bottom reference navigation hotspot missing"
 
-# Installer: exact approved reference raster plus real mutable data overlays.
+# Installer: approved reference raster is painted first; demo-only hardware,
+# drives, version and selected states are masked and replaced with real data.
 grep -Fq 'class InstallerShell' "$UI/installer_shell.py" || fail "reference-backed Installer shell missing"
 grep -Fq '/usr/share/mechos/branding/mechos-installer-reference.png' "$UI/installer_shell.py" || fail "Installer does not use approved reference artwork"
-grep -Fq 'painter.drawPixmap(target,self.reference)' "$UI/installer_shell.py" || fail "Installer reference artwork is not painted as visual layer"
-grep -Fq 'Selected drive:' "$UI/installer_shell.py" || fail "Installer live drive overlay missing"
-grep -Fq 'Install mode:' "$UI/installer_shell.py" || fail "Installer live mode overlay missing"
+grep -Fq 'painter.drawPixmap(target, self.reference)' "$UI/installer_shell.py" || fail "Installer reference artwork is not painted as visual layer"
+grep -Fq 'Mask only the demo-data regions' "$UI/installer_shell.py" || fail "Installer reference demo-data masking missing"
+grep -Fq 'SELECT INSTALL TARGET' "$UI/installer_shell.py" || fail "Installer real target region missing"
+grep -Fq 'INSTALLATION OPTIONS' "$UI/installer_shell.py" || fail "Installer real install-mode region missing"
+grep -Fq 'SYSTEM SUMMARY' "$UI/installer_shell.py" || fail "Installer real hardware region missing"
+grep -Fq "RELEASE = Path('/etc/mechos/release')" "$UI/installer_shell.py" || fail "Installer runtime version source missing"
 grep -Fq 'Install Now' "$UI/installer_shell.py" || fail "Installer functional install hotspot missing"
 
 # OOBE: source-owned MechOS presentation instead of generic layout forms.
@@ -119,4 +123,4 @@ if min(a,b,c,d)<0 or not (a < b < c < d):
     raise SystemExit('[validate-source-system-ui] final source UI must run after runtime hotfixes and before splash/postinstall commit')
 PY
 
-echo '[validate-source-system-ui] OK: Creator and Installer use approved raster references; Live Installer resolver follows the guarded v5 libexec owner; MechScope/Quick/OOBE/system surfaces use source-owned aspect-preserving final GUI authority'
+echo '[validate-source-system-ui] OK: Creator uses approved reference raster; Installer preserves approved reference chrome while replacing demo-only data with real runtime values; remaining surfaces use source-owned aspect-preserving final GUI authority'

@@ -11,10 +11,25 @@ fail(){ printf '[MechOS Reference Splash] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [ -s "$REFERENCE" ] || fail "approved splash reference missing: $REFERENCE"
 
+ensure_plymouth_hook(){
+  local tree="$1"
+  local cfg="$tree/etc/mkinitcpio.conf"
+  [ -f "$cfg" ] || return 0
+  if grep -q '^HOOKS=' "$cfg" && ! grep '^HOOKS=' "$cfg" | grep -qw plymouth; then
+    if grep '^HOOKS=' "$cfg" | grep -qw systemd; then
+      sed -i -E '/^HOOKS=/ s/(^HOOKS=\([^)]*\bsystemd\b)/\1 plymouth/' "$cfg"
+    elif grep '^HOOKS=' "$cfg" | grep -qw udev; then
+      sed -i -E '/^HOOKS=/ s/(^HOOKS=\([^)]*\budev\b)/\1 plymouth/' "$cfg"
+    else
+      sed -i -E '/^HOOKS=/ s/\)$/ plymouth)/' "$cfg"
+    fi
+  fi
+}
+
 install_theme(){
   local tree="$1"
   local theme="$tree/usr/share/plymouth/themes/mechos"
-  mkdir -p "$theme" "$tree/etc/plymouth"
+  mkdir -p "$theme" "$tree/etc/plymouth" "$tree/usr/share/mechos/branding"
   install -m 0644 "$REFERENCE" "$theme/mechos-splash-reference.png"
   install -m 0644 "$REFERENCE" "$tree/usr/share/mechos/branding/mechos-splash-reference.png"
 
@@ -31,8 +46,6 @@ EOF
 
   cat > "$theme/mechos.script" <<'EOF'
 # MECHOS_REFERENCE_SPLASH_V1
-# The approved reference artwork is the visual authority. Preserve its aspect
-# ratio and letterbox it instead of reconstructing the design with text/widgets.
 Window.SetBackgroundTopColor(0.004, 0.008, 0.020);
 Window.SetBackgroundBottomColor(0.004, 0.008, 0.020);
 
@@ -53,8 +66,6 @@ reference.sprite.SetX((screen.w - reference.image.GetWidth()) / 2);
 reference.sprite.SetY((screen.h - reference.image.GetHeight()) / 2);
 reference.sprite.SetZ(-100);
 
-# Keep boot prompts readable without changing the approved artwork during a
-# normal boot. This text appears only when Plymouth explicitly sends a message.
 message.image = Image.Text("", 0.84, 0.90, 1.00);
 message.sprite = Sprite(message.image);
 message.sprite.SetZ(100);
@@ -74,6 +85,8 @@ Theme=mechos
 ShowDelay=0
 DeviceTimeout=8
 EOF
+
+  ensure_plymouth_hook "$tree"
 }
 
 install_theme "$ROOT"
@@ -90,12 +103,14 @@ if [ -s "$ARCHIVE" ]; then
   trap - EXIT
 fi
 
-# Reassert the approved theme on the installed target and rebuild initramfs so
-# the first reboot after installation already shows the reference splash.
-if [ -f "$POSTINSTALL" ] && ! grep -Fq 'MECHOS_REFERENCE_SPLASH_POSTINSTALL_V1' "$POSTINSTALL"; then
+# Reassert the approved theme on the installed target, guarantee the Plymouth
+# hook and kernel command line, then rebuild initramfs. This is intentionally
+# done on the target because Archinstall creates the target's mkinitcpio/boot
+# files independently from the Live ISO rootfs.
+if [ -f "$POSTINSTALL" ] && ! grep -Fq 'MECHOS_REFERENCE_SPLASH_POSTINSTALL_V2' "$POSTINSTALL"; then
 cat >> "$POSTINSTALL" <<'EOF'
 
-# MECHOS_REFERENCE_SPLASH_POSTINSTALL_V1
+# MECHOS_REFERENCE_SPLASH_POSTINSTALL_V2
 mkdir -p /etc/plymouth
 cat > /etc/plymouth/plymouthd.conf <<'PLYEOF'
 [Daemon]
@@ -103,9 +118,49 @@ Theme=mechos
 ShowDelay=0
 DeviceTimeout=8
 PLYEOF
+
+# Ensure Plymouth is actually inside the installed initramfs.
+if [ -f /etc/mkinitcpio.conf ] && grep -q '^HOOKS=' /etc/mkinitcpio.conf && ! grep '^HOOKS=' /etc/mkinitcpio.conf | grep -qw plymouth; then
+  if grep '^HOOKS=' /etc/mkinitcpio.conf | grep -qw systemd; then
+    sed -i -E '/^HOOKS=/ s/(^HOOKS=\([^)]*\bsystemd\b)/\1 plymouth/' /etc/mkinitcpio.conf
+  elif grep '^HOOKS=' /etc/mkinitcpio.conf | grep -qw udev; then
+    sed -i -E '/^HOOKS=/ s/(^HOOKS=\([^)]*\budev\b)/\1 plymouth/' /etc/mkinitcpio.conf
+  else
+    sed -i -E '/^HOOKS=/ s/\)$/ plymouth)/' /etc/mkinitcpio.conf
+  fi
+fi
+
 if command -v plymouth-set-default-theme >/dev/null 2>&1; then
   plymouth-set-default-theme mechos >/dev/null 2>&1 || true
 fi
+
+# systemd-boot / kernel-install command line.
+if [ -f /etc/kernel/cmdline ]; then
+  if ! grep -qw splash /etc/kernel/cmdline; then
+    sed -i '1 s/$/ quiet splash loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0/' /etc/kernel/cmdline
+  fi
+fi
+if [ -d /boot/loader/entries ]; then
+  for entry in /boot/loader/entries/*.conf; do
+    [ -f "$entry" ] || continue
+    if grep -q '^options ' "$entry" && ! grep '^options ' "$entry" | grep -qw splash; then
+      sed -i '/^options / s/$/ quiet splash loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0/' "$entry"
+    fi
+  done
+fi
+
+# GRUB command line.
+if [ -f /etc/default/grub ]; then
+  if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
+    if ! grep '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub | grep -qw splash; then
+      sed -i -E 's|^GRUB_CMDLINE_LINUX_DEFAULT="(.*)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 quiet splash loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0"|' /etc/default/grub
+    fi
+  else
+    echo 'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0"' >> /etc/default/grub
+  fi
+  command -v grub-mkconfig >/dev/null 2>&1 && grub-mkconfig -o /boot/grub/grub.cfg || true
+fi
+
 if command -v mkinitcpio >/dev/null 2>&1; then
   mkinitcpio -P || echo '[MechOS Reference Splash] WARNING: initramfs refresh failed; theme files remain installed.' >&2
 fi
@@ -113,4 +168,4 @@ EOF
   bash -n "$POSTINSTALL" || fail "post-install target syntax failed after splash integration"
 fi
 
-log 'Approved mechos-splash-reference.png is now the final Plymouth visual authority'
+log 'Approved splash is installed, Plymouth hook is enforced, kernel splash options are present, and installed initramfs is rebuilt'
