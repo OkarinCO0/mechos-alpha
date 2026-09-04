@@ -76,6 +76,11 @@ bash /workspace/scripts/mechos-auto-optimization-hotfix.sh
 # FINAL SYSTEM UI AUTHORITY. Creator Mode, Quick Actions, Performance Center,
 # Update Center, Recovery, Installer and OOBE use repository-owned visual modules.
 bash /workspace/scripts/mechos-source-owned-system-ui.sh
+# FINAL UPDATE CENTER v1 AUTHORITY. Stable-channel MechOS version metadata,
+# verified OS bundles, Arch/Flatpak updates, snapshots, history and rollback
+# markers are installed after the visual shell so older updater logic cannot win.
+bash /workspace/scripts/mechos-update-center-v1-integration.sh
+bash /workspace/scripts/mechos-update-center-v1-runtime-guard.sh
 # FINAL INSTALLED MECHSCOPE SESSION AUTHORITY. Correct the OOBE SDDM handoff,
 # force the permanent account into Gaming Mode, bypass Gamescope in VMs, and
 # retry through Plasma when Gamescope cannot start on physical hardware.
