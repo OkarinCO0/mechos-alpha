@@ -47,6 +47,10 @@ bash /workspace/scripts/mechos-update-center-v2-integration.sh
 bash /workspace/scripts/mechos-installer-auto-reboot-hotfix.sh
 bash /workspace/scripts/mechos-installed-mechscope-launch-hotfix.sh
 bash /workspace/scripts/mechos-vm-mode-runtime-final.sh
+# FINAL FIRST-BOOT SESSION AUTHORITY. Before OOBE completion, installed systems
+# are forced into the temporary setup account/Plasma session and VM fullscreen
+# modes are blocked. After OOBE, normal MechScope/Creator routing resumes.
+bash /workspace/scripts/mechos-firstboot-session-authority.sh
 # Install approved Plymouth artwork/theme first, then enforce the actual Live
 # ArchISO + native Clean Install boot chain that consumes it.
 bash /workspace/scripts/mechos-reference-splash-integration.sh
