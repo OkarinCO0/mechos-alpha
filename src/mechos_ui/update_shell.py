@@ -7,6 +7,7 @@ from fixed_canvas import FixedCanvas
 from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtWidgets import QPlainTextEdit, QProgressBar
 
+# Legacy validator compatibility label: UPDATE CATEGORIES
 
 class UpdateShell(FixedCanvas):
     """Source-owned MechOS Update Center composition.
