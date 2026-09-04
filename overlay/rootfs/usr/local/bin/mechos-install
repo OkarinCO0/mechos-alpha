@@ -26,8 +26,36 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 CONFIG=/usr/share/mechos/install-payload/archinstall-mechos.json
+
+# Run Archinstall as a child process instead of replacing this shell with exec.
+# That leaves a real MechOS-owned success/failure path after Archinstall exits.
+set +e
 if [[ -s "$CONFIG" ]]; then
-  exec archinstall --config "$CONFIG"
+  archinstall --config "$CONFIG"
+  install_rc=$?
+else
+  archinstall
+  install_rc=$?
+fi
+set -e
+
+if [[ "$install_rc" -ne 0 ]]; then
+  echo
+  echo "MechOS installation did not complete successfully (archinstall exit $install_rc)."
+  echo "The Live environment will remain open so you can review the installer output and try again."
+  exit "$install_rc"
 fi
 
-exec archinstall
+# MECHOS_INSTALL_SUCCESS_AUTO_REBOOT_V1
+echo
+echo "MechOS installation completed successfully."
+echo "The system will restart into the installed OS in 10 seconds."
+echo "Press Ctrl+C now only if you need to remain in the Live environment."
+echo
+sync || true
+for remaining in 10 9 8 7 6 5 4 3 2 1; do
+  printf "\rRestarting MechOS in %2d seconds... " "$remaining"
+  sleep 1
+done
+printf "\nRestarting now.\n"
+systemctl reboot
