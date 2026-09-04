@@ -45,3 +45,5 @@ jobs:
           bash scripts/validate-vm-ui-runtime-guard.sh
           bash scripts/validate-vm-shortcut-launch.sh
           bash scripts/validate-installed-mechscope-launch.sh
+          bash scripts/validate-vm-mode-runtime-final.sh
+          bash scripts/validate-hotfix-0.3.0-1.sh

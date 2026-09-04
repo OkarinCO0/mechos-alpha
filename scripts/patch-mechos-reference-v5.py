@@ -85,9 +85,12 @@ bash /workspace/scripts/mechos-update-center-v1-runtime-guard.sh
 # this countdown; failed or cancelled installs remain safely in the Live image.
 bash /workspace/scripts/mechos-installer-auto-reboot-hotfix.sh
 # FINAL INSTALLED MECHSCOPE SESSION AUTHORITY. Correct the OOBE SDDM handoff,
-# force the permanent account into Gaming Mode, bypass Gamescope in VMs, and
-# retry through Plasma when Gamescope cannot start on physical hardware.
+# force the permanent account into Gaming Mode and install the canonical session.
 bash /workspace/scripts/mechos-installed-mechscope-launch-hotfix.sh
+# FINAL VM MODE AUTHORITY. Virtual machines keep Plasma as their compositor and
+# launch MechScope/Creator only after the graphical session is ready. Physical
+# hardware keeps the normal Gamescope controller path.
+bash /workspace/scripts/mechos-vm-mode-runtime-final.sh
 # FINAL BOOT SPLASH AUTHORITY. Use the approved reference artwork directly in
 # Plymouth instead of reconstructing it from the older logo/text animation.
 bash /workspace/scripts/mechos-reference-splash-integration.sh
