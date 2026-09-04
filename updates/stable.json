@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "channel": "stable",
+  "version": "0.3.0-alpha",
+  "release_name": "MechOS v0.3.0 Alpha",
+  "published_at": "2026-09-04",
+  "notes": "Initial public Update Center v1 channel. This manifest is intentionally pinned to v0.3.0-alpha until the first v0.3.1 update bundle is published.",
+  "bundle_url": "",
+  "bundle_sha256": "",
+  "requires_reboot": false
+}

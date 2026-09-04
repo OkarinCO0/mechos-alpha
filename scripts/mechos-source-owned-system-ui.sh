@@ -112,7 +112,7 @@ def _mechos_update_build(self):
       'performance':lambda:_spawn(['/usr/local/bin/mechos-performance-center']),
       'creator':lambda:_spawn(['/usr/local/bin/mechos-mode-launch','creator']) if __import__('pathlib').Path('/usr/local/bin/mechos-mode-launch').exists() else _spawn(['/usr/local/bin/mechos-creator-mode'])}
     ui=shell.UpdateShell(self,actions,self); self.setCentralWidget(ui); self._mechos_source_ui=ui
-    for n in ('channel','status_label','details_label','reboot_label','reboot_button','check_button','update_button','history_button','progress','log','history'): setattr(self,n,getattr(ui,n))
+    for n in ('channel','status_label','details_label','version_label','reboot_label','reboot_button','check_button','update_button','history_button','progress','log','history'): setattr(self,n,getattr(ui,n))
     self.setWindowFlag(Qt.WindowType.FramelessWindowHint,True); self.setWindowState(Qt.WindowState.WindowFullScreen)
 UpdateCenter.build_ui=_mechos_update_build
 '''
