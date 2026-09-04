@@ -27,9 +27,53 @@ if grep -Eq '^[[:space:]]*exec[[:space:]]+archinstall([[:space:]]|$)' "$INSTALLE
   fail "canonical installer still execs archinstall and cannot run post-success policy"
 fi
 
-grep -Fq 'canonical success-only reboot policy already installed' "$HOTFIX" || fail "late hotfix does not validate canonical source policy"
-grep -Fq 'canonical archinstall execution block not found' "$HOTFIX" || fail "legacy compatibility repair diagnostic missing"
+grep -Fq 'MECHOS_ARCHLIVE_ROOT' "$HOTFIX" || fail "final reboot guard cannot be exercised against an isolated generated root"
+grep -Fq 'Archinstall exited.' "$HOTFIX" || fail "generated installer completion-tail compatibility missing"
+grep -Fq 'no supported Archinstall completion tail found' "$HOTFIX" || fail "final repair diagnostic missing"
 grep -Fq 'mechos-installer-auto-reboot-hotfix.sh' "$PATCHER" || fail "auto-reboot hotfix is not wired into final build chain"
+
+# Reproduce the full installer tail created by build-mechos-archiso.sh. This is
+# the form that exists at the moment the final auto-reboot guard runs during an
+# ISO build, so CI must prove it can be repaired rather than only validating the
+# smaller source-overlay launcher.
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/usr/local/bin"
+cat > "$tmp/usr/local/bin/mechos-install" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+CONFIG="/usr/share/mechos/install-payload/archinstall-mechos.json"
+PAYLOAD_SENTINEL="payload-server-and-hardware-scan-must-survive"
+
+echo "$PAYLOAD_SENTINEL" >/dev/null
+
+# Do NOT use --silent. The user still chooses the disk, filesystem,
+# bootloader, username/password and confirms all destructive actions.
+archinstall --config "$CONFIG"
+
+echo
+echo "Archinstall exited."
+echo "If installation completed successfully, the MechOS post-install"
+echo "stage should have created /var/lib/mechos/installed in the new system."
+EOF
+chmod 0755 "$tmp/usr/local/bin/mechos-install"
+
+MECHOS_ARCHLIVE_ROOT="$tmp" bash "$HOTFIX" >/tmp/mechos-auto-reboot-validation.log
+TEST_INSTALLER="$tmp/usr/local/bin/mechos-install"
+bash -n "$TEST_INSTALLER" || fail "generated installer repair produced invalid shell"
+grep -Fq 'payload-server-and-hardware-scan-must-survive' "$TEST_INSTALLER" || fail "generated installer repair overwrote earlier installer functionality"
+grep -Fq 'MECHOS_INSTALL_SUCCESS_AUTO_REBOOT_V1' "$TEST_INSTALLER" || fail "generated installer did not receive reboot policy"
+grep -Fq 'install_rc=$?' "$TEST_INSTALLER" || fail "generated installer does not capture archinstall rc"
+grep -Fq 'if [[ "$install_rc" -ne 0 ]]' "$TEST_INSTALLER" || fail "generated installer failure guard missing"
+grep -Fq 'systemctl reboot' "$TEST_INSTALLER" || fail "generated installer reboot action missing"
+if grep -Fq 'echo "Archinstall exited."' "$TEST_INSTALLER"; then
+  fail "obsolete generated success tail survived final repair"
+fi
+
+# The final guard must be idempotent on the already-repaired generated backend.
+MECHOS_ARCHLIVE_ROOT="$tmp" bash "$HOTFIX" >/tmp/mechos-auto-reboot-validation-idempotent.log
+
+grep -Fq 'success-only reboot policy already installed' /tmp/mechos-auto-reboot-validation-idempotent.log || fail "final reboot guard is not idempotent"
 
 python3 - "$PATCHER" <<'PY'
 from pathlib import Path
@@ -42,4 +86,4 @@ if min(a,b,c) < 0 or not (a < b < c):
     raise SystemExit('[validate-installer-auto-reboot] success reboot policy must be final after updater and before installed-session finalization')
 PY
 
-echo '[validate-installer-auto-reboot] OK: canonical installer retains control after archinstall; only rc=0 reaches the visible restart countdown and failed/cancelled installs remain in Live'
+echo '[validate-installer-auto-reboot] OK: both canonical and generated installer backends preserve control after archinstall; only rc=0 reaches the visible restart countdown'
