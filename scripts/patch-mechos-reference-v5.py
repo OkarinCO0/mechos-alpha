@@ -63,6 +63,11 @@ bash /workspace/scripts/mechos-reference-splash-integration.sh
 bash /workspace/scripts/mechos-plymouth-boot-final.sh
 bash /workspace/scripts/mechos-reference-v5-postinstall-stage.sh commit
 bash /workspace/scripts/mechos-finalize-install-payload.sh final
+# NEW BUILD HARDENING. Fix every issue found during VM + hardware testing in the
+# actual installed payload: automatic OOBE, wheel/sudo policy, user-writable
+# update discovery cache, working Creator/MechScope desktop icons and Creator UI
+# coordinate alignment.
+bash /workspace/scripts/mechos-new-build-final-hardening.sh
 # ABSOLUTE LAST INSTALLED-PAYLOAD AUTHORITY. Nothing after this command may
 # replace OOBE, updater, mode-switch shortcuts or Creator geometry. It fixes the
 # exact VM + physical-hardware problems found during v0.3.0 testing and fails the
