@@ -10,33 +10,77 @@ fail(){ printf '[MechOS Installer Auto Reboot] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [ -f "$INSTALLER" ] || fail "installer backend missing: $INSTALLER"
 
-if grep -Fq "$MARKER" "$INSTALLER"; then
-  log "successful-install reboot policy already installed"
+validate_policy(){
+  grep -Fq "$MARKER" "$INSTALLER" || return 1
+  grep -Fq 'archinstall --config "$CONFIG"' "$INSTALLER" || return 1
+  grep -Fq 'install_rc=$?' "$INSTALLER" || return 1
+  grep -Fq 'if [[ "$install_rc" -ne 0 ]]' "$INSTALLER" || return 1
+  grep -Fq 'for remaining in 10 9 8 7 6 5 4 3 2 1' "$INSTALLER" || return 1
+  grep -Fq 'Press Ctrl+C' "$INSTALLER" || return 1
+  grep -Fq 'systemctl reboot' "$INSTALLER" || return 1
+  if grep -Eq '^[[:space:]]*exec[[:space:]]+archinstall([[:space:]]|$)' "$INSTALLER"; then
+    return 1
+  fi
+  return 0
+}
+
+if validate_policy; then
+  log "canonical success-only reboot policy already installed"
   exit 0
 fi
 
+# Compatibility repair for older Live overlays that still replace the shell
+# with `exec archinstall`. The canonical overlay now owns this policy, so this
+# is only a final-build guard for stale or externally supplied installer files.
 python3 - "$INSTALLER" <<'PY'
 from pathlib import Path
-import sys
+import re,sys
 
 path=Path(sys.argv[1])
 text=path.read_text(encoding='utf-8')
 marker='# MECHOS_INSTALL_SUCCESS_AUTO_REBOOT_V1'
+if marker in text:
+    raise SystemExit('[MechOS Installer Auto Reboot] existing marker is incomplete or invalid')
 
-# This block is deliberately attached to the successful return from archinstall.
-# With set -e enabled above it, a failed/cancelled archinstall exits before this
-# code and therefore can never reboot the machine.
-needle='''echo\necho "Archinstall exited."\necho "If installation completed successfully, the MechOS post-install"\necho "stage should have created /var/lib/mechos/installed in the new system."'''
-replacement='''# MECHOS_INSTALL_SUCCESS_AUTO_REBOOT_V1\necho\necho "MechOS installation completed successfully."\necho "The system will restart into the installed OS in 10 seconds."\necho "Press Ctrl+C now only if you need to remain in the Live environment."\necho\nsync || true\nfor remaining in 10 9 8 7 6 5 4 3 2 1; do\n  printf "\\rRestarting MechOS in %2d seconds... " "$remaining"\n  sleep 1\ndone\nprintf "\\nRestarting now.\\n"\nsystemctl reboot\n'''
+pattern=re.compile(r'''if \[\[ -s "\$CONFIG" \]\]; then\n\s*exec archinstall --config "\$CONFIG"\nfi\n\nexec archinstall\s*\n?''')
+replacement=r'''set +e
+if [[ -s "$CONFIG" ]]; then
+  archinstall --config "$CONFIG"
+  install_rc=$?
+else
+  archinstall
+  install_rc=$?
+fi
+set -e
 
-if needle not in text:
-    raise SystemExit('[MechOS Installer Auto Reboot] success anchor not found in mechos-install')
-text=text.replace(needle,replacement,1)
-path.write_text(text,encoding='utf-8')
+if [[ "$install_rc" -ne 0 ]]; then
+  echo
+  echo "MechOS installation did not complete successfully (archinstall exit $install_rc)."
+  echo "The Live environment will remain open so you can review the installer output and try again."
+  exit "$install_rc"
+fi
+
+# MECHOS_INSTALL_SUCCESS_AUTO_REBOOT_V1
+echo
+echo "MechOS installation completed successfully."
+echo "The system will restart into the installed OS in 10 seconds."
+echo "Press Ctrl+C now only if you need to remain in the Live environment."
+echo
+sync || true
+for remaining in 10 9 8 7 6 5 4 3 2 1; do
+  printf "\rRestarting MechOS in %2d seconds... " "$remaining"
+  sleep 1
+done
+printf "\nRestarting now.\n"
+systemctl reboot
+'''
+new,count=pattern.subn(replacement,text,count=1)
+if count != 1:
+    raise SystemExit('[MechOS Installer Auto Reboot] canonical archinstall execution block not found in mechos-install')
+path.write_text(new,encoding='utf-8')
 PY
 
 bash -n "$INSTALLER" || fail "patched installer backend failed shell syntax validation"
-grep -Fq "$MARKER" "$INSTALLER" || fail "auto reboot marker missing after patch"
-grep -Fq 'systemctl reboot' "$INSTALLER" || fail "reboot command missing after patch"
+validate_policy || fail "success-only reboot policy validation failed after compatibility repair"
 
-log "successful installs now restart automatically; failed/cancelled installs remain in Live"
+log "successful installs restart automatically; failed/cancelled installs remain in Live"
