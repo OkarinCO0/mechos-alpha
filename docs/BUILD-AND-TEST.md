@@ -31,3 +31,24 @@ Verify:
 - the generated ISO matches its SHA-256 file.
 
 Static validation catches source and configuration mistakes, but only a VM installation can validate partitioning, bootloader, display-manager and graphics behavior.
+
+## Release candidate certification
+
+A successful build and VM smoke test are not enough for a public release. For each v0.3.0 release candidate, copy or reset `docs/RELEASE-CERTIFICATION-v0.3.0.md`, record the RC/build ID and commit SHA, and complete every BLOCKER section.
+
+The public release is **NO-GO** until the hard gate passes, including:
+
+- successful ISO build and checksum;
+- Live boot;
+- clean installation;
+- OOBE and `mechscope.desktop` handoff;
+- installed MechScope and mode switching;
+- at least one physical-hardware certification;
+- real GPU/Vulkan verification;
+- Steam/Proton game tests;
+- Creator Mode advertised features;
+- Update Center and Recovery;
+- installer safety tests;
+- release hygiene and known-issues review.
+
+Do not use VirtualBox frame rate as a gaming-performance certification result. Virtual machines are for boot, install, UI, fallback and basic runtime testing; gaming performance must be verified on physical hardware.
