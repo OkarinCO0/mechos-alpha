@@ -76,11 +76,14 @@ bash /workspace/scripts/mechos-auto-optimization-hotfix.sh
 # FINAL SYSTEM UI AUTHORITY. Creator Mode, Quick Actions, Performance Center,
 # Update Center, Recovery, Installer and OOBE use repository-owned visual modules.
 bash /workspace/scripts/mechos-source-owned-system-ui.sh
-# FINAL UPDATE CENTER v1 AUTHORITY. Stable-channel MechOS version metadata,
-# verified OS bundles, Arch/Flatpak updates, snapshots, history and rollback
-# markers are installed after the visual shell so older updater logic cannot win.
+# Update Center v1 supplies the verified stable channel, helper, snapshots,
+# package/Flatpak update engine and rollback markers.
 bash /workspace/scripts/mechos-update-center-v1-integration.sh
 bash /workspace/scripts/mechos-update-center-v1-runtime-guard.sh
+# FINAL UPDATE CENTER VISUAL/RUNTIME AUTHORITY. v2 fixes install-button state,
+# safe archive parent directories and presents the updater as a native MechOS
+# system console instead of the old developer utility layout.
+bash /workspace/scripts/mechos-update-center-v2-integration.sh
 # FINAL INSTALL SUCCESS POLICY. Only a successful archinstall return reaches
 # this countdown; failed or cancelled installs remain safely in the Live image.
 bash /workspace/scripts/mechos-installer-auto-reboot-hotfix.sh
