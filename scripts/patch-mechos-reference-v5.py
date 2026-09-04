@@ -41,6 +41,9 @@ bash /workspace/scripts/mechos-vm-shortcut-launch-hotfix.sh
 bash /workspace/scripts/mechos-native-ui-shell-integration.sh
 bash /workspace/scripts/mechos-auto-optimization-hotfix.sh
 bash /workspace/scripts/mechos-source-owned-system-ui.sh
+# Keep Creator Mode artwork and click/focus regions on the same native reference
+# coordinate system after the source-owned UI becomes authoritative.
+bash /workspace/scripts/mechos-creator-alignment-hotfix.sh
 bash /workspace/scripts/mechos-update-center-v1-integration.sh
 bash /workspace/scripts/mechos-update-center-v1-runtime-guard.sh
 bash /workspace/scripts/mechos-update-center-v2-integration.sh
