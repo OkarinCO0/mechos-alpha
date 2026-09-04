@@ -17,7 +17,8 @@ grep -Fq 'Session=plasma.desktop' "$FIRSTBOOT" || fail "OOBE is not forced into 
 grep -Fq 'mechos-oobe-start' "$FIRSTBOOT" || fail "OOBE launcher missing"
 grep -Fq 'MECHOS_VM_OOBE_GATE_V1' "$FIRSTBOOT" || fail "VM OOBE gate missing"
 grep -Fq 'OOBE incomplete; VM mode launch blocked' "$FIRSTBOOT" || fail "MechScope/Creator firstboot block missing"
-grep -Fq 'graphical.target.wants/mechos-firstboot-authority.service' "$FIRSTBOOT" || fail "firstboot service is not statically enabled"
+grep -Fq 'ln -sfn /usr/lib/systemd/system/mechos-firstboot-authority.service' "$FIRSTBOOT" || fail "firstboot service symlink creation missing"
+grep -Fq '"$wants/mechos-firstboot-authority.service"' "$FIRSTBOOT" || fail "firstboot service is not statically enabled in graphical.target.wants"
 
 grep -Fq 'MECHOS_VM_DIRECT_APP_FALLBACK_V1' "$VMAPP" || fail "VM direct app fallback missing"
 grep -Fq 'nohup "$executable"' "$VMAPP" || fail "direct Plasma-session fallback missing"
