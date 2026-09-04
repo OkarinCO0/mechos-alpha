@@ -50,3 +50,5 @@ jobs:
           bash scripts/validate-vm-mode-runtime-final.sh
           bash scripts/validate-firstboot-vm-runtime.sh
           bash scripts/validate-hotfix-0.3.0-1.sh
+          bash scripts/validate-hotfix-0.3.0-2.sh
+          bash scripts/validate-new-build-final-gate.sh
