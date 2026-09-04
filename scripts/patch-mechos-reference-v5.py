@@ -51,6 +51,10 @@ bash /workspace/scripts/mechos-vm-mode-runtime-final.sh
 # are forced into the temporary setup account/Plasma session and VM fullscreen
 # modes are blocked. After OOBE, normal MechScope/Creator routing resumes.
 bash /workspace/scripts/mechos-firstboot-session-authority.sh
+# FINAL VM APP FALLBACK. After the OOBE gate, MechScope and Creator first try
+# their user service and then fall back to direct launch in the same Plasma VM
+# graphical session if the user service cannot stay active.
+bash /workspace/scripts/mechos-vm-app-launch-final.sh
 # Install approved Plymouth artwork/theme first, then enforce the actual Live
 # ArchISO + native Clean Install boot chain that consumes it.
 bash /workspace/scripts/mechos-reference-splash-integration.sh
