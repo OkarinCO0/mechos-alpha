@@ -48,6 +48,7 @@ jobs:
           bash scripts/validate-installer-reference-runtime.sh
           bash scripts/validate-installer-auto-reboot.sh
           bash scripts/validate-update-center-v1.sh
+          bash scripts/validate-update-center-v2.sh
           bash scripts/validate-reference-splash.sh
           bash scripts/validate-live-installer-runtime-guard.sh
           bash scripts/validate-live-update-pacman-sandbox.sh
@@ -102,6 +103,7 @@ jobs:
           grep -Fq 'mechos-source-owned-system-ui.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-update-center-v1-integration.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-update-center-v1-runtime-guard.sh' scripts/build-mechos-archiso.sh
+          grep -Fq 'mechos-update-center-v2-integration.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-installer-auto-reboot-hotfix.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-installed-mechscope-launch-hotfix.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-vm-mode-runtime-final.sh' scripts/build-mechos-archiso.sh
