@@ -1,11 +1,11 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "0.3.0-hotfix.1",
-  "release_name": "MechOS v0.3.0 Hotfix 1",
+  "version": "0.3.0-hotfix.2",
+  "release_name": "MechOS v0.3.0 Hotfix 2",
   "published_at": "2026-09-04",
-  "notes": "Fixes VirtualBox/VM MechScope startup, Creator Mode switching, Return to MechScope, first-run tutorial handoff, and installed Plymouth splash repair. The hotfix keeps Plasma as the VM compositor and applies the remaining controller/session/initramfs repairs on the first reboot after installation.",
-  "bundle_url": "https://raw.githubusercontent.com/mechgod102-sketch/mechos/main/updates/bundles/MechOS-0.3.0-hotfix.1-update.tar.zst",
-  "bundle_sha256": "7e94b24876e70989f94873b3971f1cf89b781252227fa133a1ac0c92edd2a3d9",
+  "notes": "Fixes first-boot account creation so incomplete installs automatically enter MechOS setup after the required reboot; repairs the Creator Mode and Return to MechScope desktop launchers on both virtual machines and physical hardware; and fixes Creator Mode reference UI hit-zone/alignment scaling.",
+  "bundle_url": "https://raw.githubusercontent.com/mechgod102-sketch/mechos/main/updates/bundles/MechOS-0.3.0-hotfix.2-update.tar.zst",
+  "bundle_sha256": "d76c7280a299e75577a520d2788d268d6f1f4aa499c8968922135d23ccd5d8e9",
   "requires_reboot": true
 }
