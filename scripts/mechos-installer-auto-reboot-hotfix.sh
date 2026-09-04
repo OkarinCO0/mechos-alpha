@@ -2,123 +2,74 @@
 set -Eeuo pipefail
 
 ROOT="${MECHOS_ARCHLIVE_ROOT:-/workspace/archlive/airootfs}"
-INSTALLER="$ROOT/usr/local/bin/mechos-install"
-MARKER="# MECHOS_INSTALL_SUCCESS_AUTO_REBOOT_V1"
+DISPATCHER="$ROOT/usr/local/bin/mechos-install"
+NATIVE="$ROOT/usr/local/bin/mechos-native-install"
+MARKER="# MECHOS_NATIVE_INSTALL_AUTO_REBOOT_V1"
 
 log(){ printf '[MechOS Installer Auto Reboot] %s\n' "$*"; }
 fail(){ printf '[MechOS Installer Auto Reboot] ERROR: %s\n' "$*" >&2; exit 1; }
 
-[ -f "$INSTALLER" ] || fail "installer backend missing: $INSTALLER"
+[ -f "$DISPATCHER" ] || fail "installer dispatcher missing: $DISPATCHER"
+[ -f "$NATIVE" ] || fail "native installer missing: $NATIVE"
 
-validate_policy(){
-  grep -Fq "$MARKER" "$INSTALLER" || return 1
-  grep -Fq 'archinstall --config "$CONFIG"' "$INSTALLER" || return 1
-  grep -Fq 'install_rc=$?' "$INSTALLER" || return 1
-  grep -Fq 'if [[ "$install_rc" -ne 0 ]]' "$INSTALLER" || return 1
-  grep -Fq 'for remaining in 10 9 8 7 6 5 4 3 2 1' "$INSTALLER" || return 1
-  grep -Fq 'Press Ctrl+C' "$INSTALLER" || return 1
-  grep -Fq 'systemctl reboot' "$INSTALLER" || return 1
-  if grep -Eq '^[[:space:]]*exec[[:space:]]+archinstall([[:space:]]|$)' "$INSTALLER"; then
-    return 1
-  fi
+grep -Fq '/usr/local/bin/mechos-native-install' "$DISPATCHER" \
+  || fail "final installer dispatcher does not route Clean Install to mechos-native-install"
+
+validate_native_policy(){
+  grep -Fq "$MARKER" "$NATIVE" || return 1
+  grep -Fq 'QTimer.singleShot(10000,self.reboot_system)' "$NATIVE" || return 1
+  grep -Fq 'def reboot_system(self):' "$NATIVE" || return 1
+  grep -Fq "['sudo','-n','systemctl','reboot']" "$NATIVE" || return 1
+  grep -Fq "if code == 0:" "$NATIVE" || return 1
   return 0
 }
 
-if validate_policy; then
-  log "success-only reboot policy already installed"
+if validate_native_policy; then
+  log "native Clean Install success-only reboot policy already installed"
   exit 0
 fi
 
-# FINAL INSTALLER TAIL AUTHORITY
-#
-# The ISO build can materialize more than one mechos-install implementation.
-# Do not depend on the wording of the old success messages. The full generated
-# installer is identified by its payload/HTTP-server state, then its final real
-# Archinstall command is replaced through EOF. Everything before Archinstall —
-# disk warnings, payload server, hardware scan, logging and cleanup trap — is
-# intentionally preserved byte-for-byte.
-python3 - "$INSTALLER" <<'PY'
+# The final /usr/local/bin/mechos-install path is intentionally a dispatcher.
+# Clean Install is owned by the PyQt native installer, whose finished() callback
+# is the only correct place to schedule an automatic reboot after a verified
+# successful native helper exit. Do not patch or search for Archinstall here.
+python3 - "$NATIVE" <<'PY'
 from pathlib import Path
-import re,sys
+import sys
 
 path=Path(sys.argv[1])
 text=path.read_text(encoding='utf-8')
-marker='# MECHOS_INSTALL_SUCCESS_AUTO_REBOOT_V1'
+marker='# MECHOS_NATIVE_INSTALL_AUTO_REBOOT_V1'
+
 if marker in text:
-    raise SystemExit('[MechOS Installer Auto Reboot] existing marker is incomplete or invalid')
+    raise SystemExit('[MechOS Installer Auto Reboot] existing native reboot marker is incomplete or invalid')
 
-common_success=r'''if [[ "$install_rc" -ne 0 ]]; then
-  echo
-  echo "MechOS installation did not complete successfully (archinstall exit $install_rc)."
-  echo "The Live environment will remain open so you can review the installer output and try again."
-  exit "$install_rc"
-fi
+old_import='from PyQt6.QtCore import QProcess, Qt\n'
+new_import='from PyQt6.QtCore import QProcess, Qt, QTimer\n'
+if old_import in text:
+    text=text.replace(old_import,new_import,1)
+elif 'from PyQt6.QtCore import QProcess, Qt, QTimer' not in text:
+    raise SystemExit('[MechOS Installer Auto Reboot] native installer Qt import block not found')
 
-# MECHOS_INSTALL_SUCCESS_AUTO_REBOOT_V1
-echo
-echo "MechOS installation completed successfully."
-echo "The system will restart into the installed OS in 10 seconds."
-echo "Press Ctrl+C now only if you need to remain in the Live environment."
-echo
-sync || true
-for remaining in 10 9 8 7 6 5 4 3 2 1; do
-  printf "\rRestarting MechOS in %2d seconds... " "$remaining"
-  sleep 1
-done
-printf "\nRestarting now.\n"
-systemctl reboot
-'''
+old_success="""        if code == 0:\n            self.progress.setValue(100)\n            self.status.setText('MechOS is installed. Remove the Live USB and reboot into the installed system.')\n            QMessageBox.information(self,'MechOS Installed','Installation completed successfully.\\n\\nRemove the Live USB and reboot. First boot will open MechOS account setup.')\n        else:\n"""
+new_success="""        if code == 0:\n            # MECHOS_NATIVE_INSTALL_AUTO_REBOOT_V1\n            self.progress.setValue(100)\n            self.status.setText('MechOS is installed. Restarting automatically in 10 seconds...')\n            self.close_btn.setEnabled(False)\n            QTimer.singleShot(10000,self.reboot_system)\n        else:\n"""
+if old_success not in text:
+    raise SystemExit('[MechOS Installer Auto Reboot] native installer success callback not found')
+text=text.replace(old_success,new_success,1)
 
-patched=False
+anchor='''    def closeEvent(self,event):\n'''
+method="""    def reboot_system(self):\n        self.status.setText('Restarting MechOS now...')\n        try:\n            subprocess.Popen(['sudo','-n','systemctl','reboot'])\n        except Exception as exc:\n            self.close_btn.setEnabled(True)\n            self.status.setText(f'Automatic restart failed: {exc}. Use the system power menu to reboot.')\n\n"""
+if anchor not in text:
+    raise SystemExit('[MechOS Installer Auto Reboot] native installer closeEvent anchor not found')
+text=text.replace(anchor,method+anchor,1)
 
-# Full generated installer used by build-mechos-archiso.sh. Previous final UI
-# guards may alter the informational text after Archinstall, so locate the
-# actual command line rather than any particular completion sentence.
-full_generated=(
-    'PAYLOAD_DIR=' in text and
-    'SERVER_PID=' in text and
-    'mechos-postinstall-target' in text
-)
-if full_generated:
-    lines=text.splitlines(keepends=True)
-    candidates=[]
-    command_re=re.compile(r'^\s*(?:exec\s+)?archinstall(?:\s+.*)?$')
-    for i,line in enumerate(lines):
-        if command_re.match(line.rstrip('\r\n')):
-            candidates.append(i)
-    if candidates:
-        idx=candidates[-1]
-        original=lines[idx].strip()
-        original=re.sub(r'^exec\s+','',original,count=1)
-        generated='set +e\n'+original+'\ninstall_rc=$?\nset -e\n\n'+common_success
-        text=''.join(lines[:idx])+generated
-        patched=True
-
-# Compatibility fallback for the small source-overlay/stale launcher form.
-if not patched:
-    pattern=re.compile(r'''if \[\[ -s "\$CONFIG" \]\]; then\n\s*exec archinstall --config "\$CONFIG"\nfi\n\nexec archinstall\s*\n?''')
-    canonical=r'''set +e
-if [[ -s "$CONFIG" ]]; then
-  archinstall --config "$CONFIG"
-  install_rc=$?
-else
-  archinstall
-  install_rc=$?
-fi
-set -e
-
-'''+common_success
-    text,count=pattern.subn(canonical,text,count=1)
-    patched=(count == 1)
-
-if not patched:
-    tail='\n'.join(text.splitlines()[-30:])
-    raise SystemExit('[MechOS Installer Auto Reboot] no supported Archinstall execution path found; final installer tail follows:\n'+tail)
-
+compile(text,str(path),'exec')
 path.write_text(text,encoding='utf-8')
 PY
 
-bash -n "$INSTALLER" || fail "patched installer backend failed shell syntax validation"
-validate_policy || fail "success-only reboot policy validation failed after final installer repair"
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile "$NATIVE" \
+  || fail "native installer failed Python syntax validation after reboot patch"
+validate_native_policy \
+  || fail "native Clean Install success-only reboot policy validation failed"
 
-log "successful installs restart automatically; failed/cancelled installs remain in Live"
+log "successful native Clean Installs restart automatically after 10 seconds; failed/cancelled installs remain in Live"
