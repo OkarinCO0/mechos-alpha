@@ -4,13 +4,12 @@
 The approved installer PNG remains the visual authority for static chrome,
 branding, panel placement and styling. Demo/reference-only values baked into the
 artwork are masked at runtime and replaced with real machine/install data so the
-installed UI cannot lie about hardware, drives, version or install state.
+installer cannot lie about hardware, drives, version or install state.
 """
 from pathlib import Path
-import os
 import subprocess
 
-from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtCore import QRect, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
 from PyQt6.QtWidgets import QLabel, QProgressBar, QPushButton
 
@@ -49,8 +48,7 @@ def _ram_name():
             if line.startswith('MemTotal:'):
                 kb = int(line.split()[1]); break
         if kb:
-            gib = kb / 1024 / 1024
-            return f'{gib:.1f} GB memory'
+            return f'{kb / 1024 / 1024:.1f} GB memory'
     except Exception:
         pass
     return 'RAM detecting'
@@ -104,6 +102,12 @@ QProgressBar{background:#07101c;border:1px solid #315174;border-radius:8px;color
 QProgressBar::chunk{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #248dff,stop:1 #9b5cff);border-radius:7px}
 ''')
         self._build()
+        # In Plasma-backed VM sessions setWindowState() can be downgraded to a
+        # maximized window during startup. Reassert true fullscreen after the
+        # event loop starts so the Plasma panel never sits under the installer.
+        QTimer.singleShot(0, self.owner.showFullScreen)
+        QTimer.singleShot(250, self.owner.showFullScreen)
+        QTimer.singleShot(1000, self.owner.showFullScreen)
 
     def hotspot(self, name, rect, fn=None):
         q = self.reg(QPushButton(''), rect)
@@ -151,13 +155,12 @@ QProgressBar::chunk{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #248df
                 lambda _=False, r=row: self.owner.nav_selected(r),
             )
 
-        self.hotspot('Change Drive', QRect(1000, 300, 160, 70), self.owner.open_partition_selector)
         self.hotspot('Repair', QRect(1280, 930, 250, 96), self.owner.recovery)
         self.hotspot('Install Now', QRect(1540, 930, 330, 96), self.owner.install)
 
         # Real target panel. This replaces the fake WD/Samsung/Seagate devices
         # embedded in the design reference.
-        self.target_heading = self.runtime_label('SELECT INSTALL TARGET', QRect(430, 300, 520, 34), 12, True, 'runtime-accent')
+        self.runtime_label('SELECT INSTALL TARGET', QRect(430, 300, 520, 34), 12, True, 'runtime-accent')
         self.drive_title = self.runtime_label('No drive selected', QRect(465, 365, 540, 42), 15, True)
         self.drive_detail = self.runtime_label('Choose the drive MechOS should install to.', QRect(465, 408, 590, 54), 11, False, 'runtime-muted')
         self.drive_path = self.runtime_label('', QRect(465, 466, 590, 34), 10, True, 'runtime-accent')
@@ -197,12 +200,21 @@ QProgressBar::chunk{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #248df
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setFormat('Ready to install')
+        self.progress.valueChanged.connect(self._progress_changed)
 
         release = _release_name()
         self.runtime_label('MECHOS LIVE ENVIRONMENT', QRect(72, 970, 320, 28), 9, True, 'runtime-accent')
         self.runtime_label(f'Version {release}', QRect(72, 1000, 410, 28), 9, False, 'runtime-muted')
 
         self.set_mode('clean')
+
+    def _progress_changed(self, value):
+        if value >= 100:
+            self.overview_status.setText('Installation complete')
+        elif value > 0:
+            self.overview_status.setText('Installing MechOS')
+        else:
+            self.overview_status.setText('Ready to install')
 
     def set_mode(self, mode):
         names = {
