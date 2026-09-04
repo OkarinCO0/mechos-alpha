@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 
 # Runs once on the first boot after MechOS v0.3.0-hotfix.1 is installed through
-# Update Center. It only repairs installed-system runtime state that Update
-# Center v1 intentionally does not write directly (boot/initramfs config and
+# Update Center. It repairs installed-system runtime state that Update Center v1
+# intentionally does not write directly (boot/initramfs configuration and
 # in-place routing of generated controller/session scripts).
 
 STATE=/var/lib/mechos
@@ -71,7 +71,55 @@ PY
   bash -n "$session"
 }
 
+install_reference_theme(){
+  local ref=/usr/share/mechos/branding/mechos-splash-reference.png
+  local theme=/usr/share/plymouth/themes/mechos
+  [ -s "$ref" ] || { echo "Splash reference is not present at $ref; keeping existing Plymouth artwork."; return 0; }
+  mkdir -p "$theme"
+  install -m 0644 "$ref" "$theme/mechos-splash-reference.png"
+  cat > "$theme/mechos.plymouth" <<'EOF'
+[Plymouth Theme]
+Name=MechOS Reference Splash
+Description=Approved MechOS installed-system splash screen
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/mechos
+ScriptFile=/usr/share/plymouth/themes/mechos/mechos.script
+EOF
+  cat > "$theme/mechos.script" <<'EOF'
+# MECHOS_REFERENCE_SPLASH_V1
+Window.SetBackgroundTopColor(0.004, 0.008, 0.020);
+Window.SetBackgroundBottomColor(0.004, 0.008, 0.020);
+reference.original = Image("mechos-splash-reference.png");
+screen.w = Window.GetWidth();
+screen.h = Window.GetHeight();
+image.w = reference.original.GetWidth();
+image.h = reference.original.GetHeight();
+scale.x = screen.w / image.w;
+scale.y = screen.h / image.h;
+scale = scale.x;
+if (scale.y < scale.x) { scale = scale.y; }
+reference.image = reference.original.Scale(image.w * scale, image.h * scale);
+reference.sprite = Sprite(reference.image);
+reference.sprite.SetX((screen.w - reference.image.GetWidth()) / 2);
+reference.sprite.SetY((screen.h - reference.image.GetHeight()) / 2);
+reference.sprite.SetZ(-100);
+message.image = Image.Text("", 0.84, 0.90, 1.00);
+message.sprite = Sprite(message.image);
+message.sprite.SetZ(100);
+fun message_callback(text) {
+    message.image = Image.Text(text, 0.84, 0.90, 1.00);
+    message.sprite.SetImage(message.image);
+    message.sprite.SetX(Window.GetWidth() / 2 - message.image.GetWidth() / 2);
+    message.sprite.SetY(Window.GetHeight() - message.image.GetHeight() - 42);
+}
+Plymouth.SetMessageFunction(message_callback);
+EOF
+}
+
 repair_splash(){
+  install_reference_theme
   if [ -f /etc/mkinitcpio.conf ] && grep -q '^HOOKS=' /etc/mkinitcpio.conf && ! grep '^HOOKS=' /etc/mkinitcpio.conf | grep -qw plymouth; then
     if grep '^HOOKS=' /etc/mkinitcpio.conf | grep -qw systemd; then
       sed -i -E '/^HOOKS=/ s/(^HOOKS=\([^)]*\bsystemd\b)/\1 plymouth/' /etc/mkinitcpio.conf
