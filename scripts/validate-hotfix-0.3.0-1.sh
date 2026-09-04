@@ -38,6 +38,14 @@ allowed=(
  'usr/share/wayland-sessions/', 'usr/lib/systemd/', 'etc/mechos/',
  'etc/systemd/', 'etc/xdg/'
 )
+# tar includes structural parent directories such as `usr/`, `usr/lib/` and
+# `etc/`. Accept a directory only when it is a parent of an approved prefix;
+# files still must live at or below one of the explicit Update Center paths.
+allowed_parents=set()
+for prefix in allowed:
+    parts=prefix.rstrip('/').split('/')
+    for i in range(1,len(parts)):
+        allowed_parents.add('/'.join(parts[:i]))
 required={
  'usr/local/bin/mechos-vm-mode-runtime',
  'usr/local/libexec/mechos-hotfix-0.3.0-1-apply',
@@ -55,9 +63,14 @@ for raw in p.stdout.splitlines():
     path=PurePosixPath(name)
     if path.is_absolute() or '..' in path.parts:
         raise SystemExit(f'[validate-hotfix-0.3.0-1] unsafe bundle path: {name}')
-    if not any(name==x.rstrip('/') or name.startswith(x) for x in allowed):
+    normalized=name.rstrip('/')
+    is_dir=name.endswith('/')
+    if is_dir and normalized in allowed_parents:
+        seen.add(normalized)
+        continue
+    if not any(normalized==x.rstrip('/') or normalized.startswith(x) for x in allowed):
         raise SystemExit(f'[validate-hotfix-0.3.0-1] path outside Update Center allowlist: {name}')
-    seen.add(name.rstrip('/'))
+    seen.add(normalized)
 missing=sorted(required-seen)
 if missing:
     raise SystemExit('[validate-hotfix-0.3.0-1] bundle missing required files: '+', '.join(missing))
