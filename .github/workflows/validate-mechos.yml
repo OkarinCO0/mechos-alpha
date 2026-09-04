@@ -40,6 +40,7 @@ jobs:
           bash scripts/validate-update-center-v1.sh
           bash scripts/validate-update-center-v2.sh
           bash scripts/validate-reference-splash.sh
+          bash scripts/validate-plymouth-native-final.sh
           bash scripts/validate-live-installer-runtime-guard.sh
           bash scripts/validate-live-update-pacman-sandbox.sh
           bash scripts/validate-aur-helper.sh
@@ -47,4 +48,5 @@ jobs:
           bash scripts/validate-vm-shortcut-launch.sh
           bash scripts/validate-installed-mechscope-launch.sh
           bash scripts/validate-vm-mode-runtime-final.sh
+          bash scripts/validate-firstboot-vm-runtime.sh
           bash scripts/validate-hotfix-0.3.0-1.sh
