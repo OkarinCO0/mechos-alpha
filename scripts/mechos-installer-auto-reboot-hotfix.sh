@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT="/workspace/archlive/airootfs"
+ROOT="${MECHOS_ARCHLIVE_ROOT:-/workspace/archlive/airootfs}"
 INSTALLER="$ROOT/usr/local/bin/mechos-install"
 MARKER="# MECHOS_INSTALL_SUCCESS_AUTO_REBOOT_V1"
 
