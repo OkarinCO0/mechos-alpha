@@ -57,4 +57,8 @@ out/MechOS-Arch-Creator-x86_64.iso.sha256
 
 Open **Actions → Build MechOS Arch ISO → Run workflow**. Source validation also runs automatically on pull requests and pushes to `main`.
 
-See `CLOUD-BUILD.md` and `docs/BUILD-AND-TEST.md` for the complete release test checklist.
+## Release certification
+
+Before publishing a v0.3.0 build, complete `docs/RELEASE-CERTIFICATION-v0.3.0.md`. It is the GO / NO-GO release gate for ISO integrity, Live boot, clean installation, OOBE, MechScope, Creator Mode, mode switching, physical hardware, Vulkan/GPU behavior, Steam/Proton, updates, recovery, installer safety and release hygiene.
+
+See `CLOUD-BUILD.md`, `docs/BUILD-AND-TEST.md` and `docs/RELEASE-CERTIFICATION-v0.3.0.md` for build and release testing.
